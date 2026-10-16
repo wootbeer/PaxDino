@@ -20,9 +20,9 @@ included.** You need your own dump of the game to build or play this.
 - Local multiplayer, up to 4 players, each with their own controller or the
   keyboard.
 - Earn medals in bot matches.
-- Frag tag bugged fixed in original rom. (do not use rev1)
+- Co-op Frag Tag trial bug fixed (needs the 1.0 USA ROM).
 - Classic and Modern settings presets.
-- Bloom, CRT, Scanlines and LCD screen filters.
+- CRT, Scanlines and LCD screen filters.
 - Custom music. Put your own songs in the Music folder.
 - Adjustable reverb.
 - Unlocks and cheats in the settings, no codes needed.

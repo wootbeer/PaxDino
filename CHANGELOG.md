@@ -5,7 +5,7 @@
 First public beta. Compared to the original N64 game:
 
 ### Added
-- Native Windows build
+- Native Windows build, plus experimental Linux and Steam Deck builds
 - ROM picker. Accepts .z64, .n64 and .v64
 - Widescreen, with the HUD on the screen edges
 - High resolutions and framerates, with smooth motion
