@@ -1,30 +1,34 @@
-# PaxDino: Turok: Rage Wars (1999 N64) Recompiled and Port
+# PaxDino: Rage Wars Modernized
 
 You will need the game file from a licensed copy in order to play it.
 
 A native PC port of Turok: Rage Wars, made by statically recompiling the N64
 game with [N64Recomp](https://github.com/N64Recomp/N64Recomp) and running it
 on [N64ModernRuntime](https://github.com/N64Recomp/N64ModernRuntime) with
-[RT64](https://github.com/rt64/rt64) for rendering. Made the same way as my
-[BattleTanx: Global Assault](https://github.com/wootbeer/btgarecomp) port.
+[RT64](https://github.com/rt64/rt64) for rendering. 
 
 Unofficial, and not affiliated with the rights holders. **No game data is
 included.** You need your own dump of the game to build or play this.
 
 ## Features
 - Runs natively on Windows. Linux and Steam Deck builds are experimental.
-- Widescreen. The HUD moves out to the edges of the screen.
-- High resolutions and framerates. Set Framerate to Display to match your
-  monitor.
-- Mouse and keyboard with mouse aim, plus modern controller layout. All
-  remappable.
+- Widescreen. 
+- High resolutions and framerates.
+- Bloom, anti-aliasing, and more.
+- Mouse and keyboard with mouse aim, plus modern controller layout.
+- Mouse and keyboard controls in game menus.
 - Local multiplayer, up to 4 players, each with their own controller or the
   keyboard.
-- Classic and Modern presets on the launcher. Modern by default.
+- Earn medals in bot matches.
+- Frag tag bugged fixed in original rom. (do not use rev1)
+- Classic and Modern settings presets.
 - Bloom, CRT, Scanlines and LCD screen filters.
 - Custom music. Put your own songs in the Music folder.
+- Adjustable reverb.
 - Unlocks and cheats in the settings, no codes needed.
 - Add to Steam from the launcher, with artwork.
+- Custom crosshairs.
+- And much, much more.
 
 ## Game Files
 You need your own data file, Turok - Rage Wars (USA).
