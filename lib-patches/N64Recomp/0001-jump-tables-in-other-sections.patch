@@ -1,0 +1,40 @@
+diff --git a/src/analysis.cpp b/src/analysis.cpp
+index 9eaaa30..76ef65f 100644
+--- a/src/analysis.cpp
++++ b/src/analysis.cpp
+@@ -314,14 +314,30 @@ bool N64Recomp::analyze_function(const N64Recomp::Context& context, const N64Rec
+             end_address = stats.jump_tables[i + 1].vram;
+         }
+ 
+-        // TODO this assumes that the jump table is in the same section as the function itself
+-        cur_jtbl.rom = cur_jtbl.vram + func.rom - func.vram;
+-        cur_jtbl.section_index = func.section_index;
++        // The jump table is usually in the function's own section. When it isn't
++        // (code run through a TLB mapping that reads its tables through kseg0),
++        // use whichever section holds the table's address.
++        int32_t jtbl_rom_offset = (int32_t)(func.rom - func.vram);
++        uint16_t jtbl_section_index = func.section_index;
++        if (cur_jtbl.vram < section->ram_addr || cur_jtbl.vram >= section->ram_addr + section->size) {
++            for (size_t s = 0; s < context.sections.size(); s++) {
++                const auto& other = context.sections[s];
++                if (cur_jtbl.vram >= other.ram_addr && cur_jtbl.vram < other.ram_addr + other.size) {
++                    jtbl_rom_offset = (int32_t)(other.rom_addr - other.ram_addr);
++                    jtbl_section_index = (uint16_t)s;
++                    break;
++                }
++            }
++        }
++        cur_jtbl.rom = cur_jtbl.vram + jtbl_rom_offset;
++        cur_jtbl.section_index = jtbl_section_index;
+ 
+         while (vram < end_address) {
+             // Retrieve the current entry of the jump table
+-            // TODO same as above
+-            uint32_t rom_addr = vram + func.rom - func.vram;
++            uint32_t rom_addr = vram + jtbl_rom_offset;
++            if (rom_addr + 4 > context.rom.size()) {
++                break;
++            }
+             uint32_t jtbl_word = byteswap(*reinterpret_cast<const uint32_t*>(&context.rom[rom_addr]));
+ 
+             if (cur_jtbl.got_offset.has_value() && got_ram_addr.has_value()) {

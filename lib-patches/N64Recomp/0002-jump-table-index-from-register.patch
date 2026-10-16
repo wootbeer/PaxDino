@@ -1,0 +1,24 @@
+diff --git a/src/cgenerator.cpp b/src/cgenerator.cpp
+index 94f85c5..e528efe 100644
+--- a/src/cgenerator.cpp
++++ b/src/cgenerator.cpp
+@@ -460,10 +460,15 @@ void N64Recomp::CGenerator::emit_switch_close() const {
+ }
+ 
+ void N64Recomp::CGenerator::emit_switch(const Context& recompiler_context, const JumpTable& jtbl, int reg) const {
+-    (void)recompiler_context;
+-    (void)reg;
+-    // TODO generate code to subtract the jump table address from the register's value instead.
+-    // Once that's done, the addend temp can be deleted to simplify the generator interface.
++    // The jump table load was turned into the address of the entry (see process_instruction),
++    // so the register holds the table's address plus the entry's offset. Take the offset from
++    // that rather than from the addend saved at the addu: a loop that steps the entry's address
++    // (instead of redoing the addu) would otherwise keep using the first entry. This matches
++    // LiveGenerator::emit_switch. Relocatable tables keep the addend.
++    if (!jtbl.got_offset.has_value() && !recompiler_context.sections[jtbl.section_index].relocatable) {
++        fmt::print(output_file, "switch (((uint32_t){} - 0x{:08X}u) >> 2) {{\n", gpr_to_string(reg), jtbl.vram);
++        return;
++    }
+     std::string jump_variable = fmt::format("jr_addend_{:08X}", jtbl.jr_vram);
+ 
+     fmt::print(output_file, "switch ({} >> 2) {{\n", jump_variable);

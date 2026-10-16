@@ -1,0 +1,28 @@
+--- a/recompinput/src/players.cpp
++++ b/recompinput/src/players.cpp
+@@ -153,6 +153,14 @@
+     stop_and_close_modal();
+ 
+     PlayerState.players = PlayerState.temp_players;
++    // The keyboard is read the same for every player, so a player with a
++    // controller has no keyboard profile (-1). Left as it was, its keyboard
++    // profile stayed the single-player one (index 0, where they all start),
++    // and the keyboard drove that player too. (Controllers are read per
++    // player, so the keyboard player's controller profile can stay.) The
++    // keyboard player uses the single-player keyboard profile, so its
++    // bindings (and the game's keyboard defaults) carry over; a new
++    // per-player profile started with none.
+     for (int i = 0; i < players::get_number_of_assigned_players(); i++) {
+         Player &player = PlayerState.players[i];
+         if (player.controller != nullptr) {
+@@ -160,8 +168,9 @@
+             if (cont_profile_index >= 0) {
+                 profiles::set_input_profile_for_player(i, cont_profile_index, InputDevice::Controller);
+             }
++            profiles::set_input_profile_for_player(i, -1, InputDevice::Keyboard);
+         } else {
+-            profiles::set_input_profile_for_player(i, profiles::get_or_create_mp_keyboard_profile_index(i), InputDevice::Keyboard);
++            profiles::set_input_profile_for_player(i, profiles::get_sp_keyboard_profile_index(), InputDevice::Keyboard);
+         }
+     }
+ }

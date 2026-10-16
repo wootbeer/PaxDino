@@ -1,0 +1,38 @@
+name: Turok Rage Wars (USA)
+sha1: 9f8cb190831945f6f707aa8c2b20e04fa4276795
+options:
+  basename: trw
+  target_path: ../turokrw.us.z64
+  base_path: .
+  compiler: GCC
+  platform: n64
+  asm_path: asm
+  src_path: src
+  build_path: build
+  find_file_boundaries: False
+  create_undefined_funcs_auto: False
+  create_undefined_syms_auto: False
+  disassemble_all: True
+  symbol_name_format: $VRAM
+segments:
+  - name: header
+    type: header
+    start: 0x0
+  - name: boot
+    type: bin
+    start: 0x40
+  - name: main
+    type: code
+    start: 0x1000
+    vram: 0x00200400
+    subsegments:
+      - [0x1000, asm]
+  - [0xC24F0, bin]
+  - name: ovl
+    type: code
+    start: 0x164000
+    vram: 0x00400000
+    subsegments:
+      - [0x164000, asm]
+  - [0x1B22B4, bin]
+  - [0x800000]

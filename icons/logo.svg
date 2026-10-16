@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- App logo: a flat, head-on take on the Rage Wars eagle talisman. Rendered to logo.png (512), app.png (256), app.ico and app.res. -->
+  <defs>
+    <linearGradient id="bronze" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9b25c"/>
+      <stop offset="0.45" stop-color="#9a7232"/>
+      <stop offset="1" stop-color="#5a3e18"/>
+    </linearGradient>
+    <linearGradient id="bronzeArm" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#7d5a26"/>
+      <stop offset="0.5" stop-color="#b48a42"/>
+      <stop offset="1" stop-color="#6e4d1f"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#3a0d0b"/>
+      <stop offset="0.5" stop-color="#6b1a14"/>
+      <stop offset="1" stop-color="#3a0d0b"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0.5" cy="0.45" r="0.6">
+      <stop offset="0" stop-color="#8a7a3c"/>
+      <stop offset="0.7" stop-color="#4f4520"/>
+      <stop offset="1" stop-color="#2b250f"/>
+    </radialGradient>
+    <linearGradient id="silverL" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5d6670"/>
+      <stop offset="0.48" stop-color="#f4f7fa"/>
+      <stop offset="0.52" stop-color="#c9d0d8"/>
+      <stop offset="1" stop-color="#3b4249"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f3d77a"/>
+      <stop offset="1" stop-color="#a77a26"/>
+    </linearGradient>
+    <!-- One arm, pointing up, its base on the hexagon's top edge (apothem 95). -->
+    <g id="arm">
+      <!-- frame -->
+      <path d="M -58 -92 L -70 -238 L 70 -238 L 58 -92 Z" fill="url(#bronzeArm)" stroke="#2a1a08" stroke-width="5" stroke-linejoin="round"/>
+      <!-- meander band: maroon under white dashes, a dash every step -->
+      <path d="M -50 -100 L -60 -229 L 60 -229 L 50 -100" fill="none" stroke="#4a1410" stroke-width="10" stroke-linejoin="miter"/>
+      <path d="M -50 -100 L -60 -229 L 60 -229 L 50 -100" fill="none" stroke="#efe6d6" stroke-width="10" stroke-dasharray="5 5" stroke-linejoin="miter"/>
+      <path d="M -50 -100 L -60 -229 L 60 -229 L 50 -100" fill="none" stroke="#efe6d6" stroke-width="3" stroke-dasharray="5 5" stroke-dashoffset="5"/>
+      <!-- inner panel -->
+      <path d="M -42 -104 L -50 -220 L 50 -220 L 42 -104 Z" fill="url(#panel)" stroke="#1d0605" stroke-width="3"/>
+      <!-- carved columns -->
+      <g fill="url(#gold)" stroke="#3a240a" stroke-width="1.5">
+        <path d="M -38 -112 L -44 -212 L -30 -212 L -26 -112 Z"/>
+        <path d="M 38 -112 L 44 -212 L 30 -212 L 26 -112 Z"/>
+      </g>
+      <g fill="#3a0d0b">
+        <rect x="-38" y="-200" width="6" height="10"/><rect x="-37" y="-176" width="6" height="10"/>
+        <rect x="-36" y="-152" width="6" height="10"/><rect x="-35" y="-128" width="6" height="10"/>
+        <rect x="32" y="-200" width="6" height="10"/><rect x="31" y="-176" width="6" height="10"/>
+        <rect x="30" y="-152" width="6" height="10"/><rect x="29" y="-128" width="6" height="10"/>
+      </g>
+      <!-- centre motif: stacked diamonds -->
+      <g stroke="#2a1505" stroke-width="2">
+        <path d="M 0 -210 L 14 -186 L 0 -162 L -14 -186 Z" fill="url(#gold)"/>
+        <path d="M 0 -170 L 16 -142 L 0 -114 L -16 -142 Z" fill="#b8892f"/>
+        <path d="M 0 -196 L 6 -186 L 0 -176 L -6 -186 Z" fill="#7a1d16" stroke="none"/>
+        <path d="M 0 -153 L 7 -142 L 0 -131 L -7 -142 Z" fill="#7a1d16" stroke="none"/>
+      </g>
+    </g>
+  </defs>
+
+  <g transform="translate(256 285)">
+    <use href="#arm"/>
+    <use href="#arm" transform="rotate(120)"/>
+    <use href="#arm" transform="rotate(240)"/>
+
+    <!-- hexagon hub (flat top) -->
+    <polygon points="112,0 56,-97 -56,-97 -112,0 -56,97 56,97" fill="url(#bronze)" stroke="#2a1a08" stroke-width="6" stroke-linejoin="round"/>
+    <!-- meander ring -->
+    <polygon points="100,0 50,-86.6 -50,-86.6 -100,0 -50,86.6 50,86.6" fill="none" stroke="#4a1410" stroke-width="9"/>
+    <polygon points="100,0 50,-86.6 -50,-86.6 -100,0 -50,86.6 50,86.6" fill="none" stroke="#efe6d6" stroke-width="9" stroke-dasharray="5 5"/>
+    <!-- recessed core -->
+    <polygon points="88,0 44,-76 -44,-76 -88,0 -44,76 44,76" fill="url(#core)" stroke="#1c1708" stroke-width="4" stroke-linejoin="round"/>
+    <!-- silver hourglass -->
+    <g stroke="#1a1d21" stroke-width="3" stroke-linejoin="round">
+      <path d="M -36 -64 L 36 -64 L 0 0 Z" fill="url(#silverL)"/>
+      <path d="M -36 64 L 36 64 L 0 0 Z" fill="url(#silverL)"/>
+    </g>
+    <path d="M -28 -60 L 0 -10" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2"/>
+    <path d="M -28 60 L 0 10" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2"/>
+  </g>
+</svg>

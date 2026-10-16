@@ -1,0 +1,132 @@
+diff --git a/include/rt64_extended_gbi.h b/include/rt64_extended_gbi.h
+index d387090..aa543b5 100644
+--- a/include/rt64_extended_gbi.h
++++ b/include/rt64_extended_gbi.h
+@@ -80,7 +80,8 @@
+ #define G_EX_SETVERTEXSEGMENT_V1        0x000031
+ #define G_EX_SETTEXCOORDWRAPPOINT_V1    0x000032
+ #define G_EX_SETRECTASPECT_V1           0x000033
+-#define G_EX_MAX                        0x000034
++#define G_EX_SETAUTOANCHOR_V1           0x000034
++#define G_EX_MAX                        0x000035
+ 
+ #define G_EX_ORIGIN_NONE            0x800
+ #define G_EX_ORIGIN_LEFT            0x0
+diff --git a/src/gbi/rt64_gbi_extended.cpp b/src/gbi/rt64_gbi_extended.cpp
+index 20c0d4d..304e2c9 100644
+--- a/src/gbi/rt64_gbi_extended.cpp
++++ b/src/gbi/rt64_gbi_extended.cpp
+@@ -87,6 +87,10 @@ namespace RT64 {
+             state->rdp->setRectAlign(extAlignment);
+         }
+ 
++        void setAutoAnchorV1(State *state, DisplayList **dl) {
++            state->rdp->setAutoAnchor(uint8_t((*dl)->p1(0, 8)));
++        }
++
+         void setViewportAlignV1(State *state, DisplayList **dl) {
+             const uint16_t ori = (*dl)->p1(0, 12);
+             *dl = *dl + 1;
+@@ -394,6 +398,7 @@ namespace RT64 {
+             Map[G_EX_SETVIEWPORT_V1] = &setViewportV1;
+             Map[G_EX_SETSCISSOR_V1] = &setScissorV1;
+             Map[G_EX_SETRECTALIGN_V1] = &setRectAlignV1;
++            Map[G_EX_SETAUTOANCHOR_V1] = &setAutoAnchorV1;
+             Map[G_EX_SETVIEWPORTALIGN_V1] = &setViewportAlignV1;
+             Map[G_EX_SETSCISSORALIGN_V1] = &setScissorAlignV1;
+             Map[G_EX_SETREFRESHRATE_V1] = &setRefreshRateV1;
+diff --git a/src/hle/rt64_rdp.cpp b/src/hle/rt64_rdp.cpp
+index a10c11a..c08267a 100644
+--- a/src/hle/rt64_rdp.cpp
++++ b/src/hle/rt64_rdp.cpp
+@@ -1053,6 +1053,47 @@ namespace RT64 {
+         extended.global.rect = extAlignment;
+     }
+ 
++    void RDP::setAutoAnchor(uint8_t mode) {
++        extended.autoAnchor = mode;
++    }
++
++    // Anchors a HUD rectangle to the nearest screen edge when automatic
++    // anchoring is on and the rectangle has no alignment of its own:
++    // rectangles in the top quarter go to the side they're on, the bottom
++    // quarter's to the left (or right, past 60% of the width), and anything
++    // in between (crosshair, messages, menus) stays centred. Right-anchored
++    // coordinates are relative to the right edge.
++    ExtendedAlignment RDP::autoAnchorAlignment(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, const ExtendedAlignment &extAlignment) const {
++        if ((extended.autoAnchor == 0) || (extAlignment.leftOrigin != G_EX_ORIGIN_NONE) || (extAlignment.rightOrigin != G_EX_ORIGIN_NONE) || (colorImage.width == 0)) {
++            return extAlignment;
++        }
++
++        const int32_t width = int32_t(colorImage.width) * 4;
++        const int32_t height = (width * 3) / 4;
++        const int32_t cx = (ulx + lrx) / 2;
++        const int32_t cy = (uly + lry) / 2;
++        uint16_t origin = G_EX_ORIGIN_NONE;
++        if (cy < height / 4) {
++            origin = (cx < width / 2) ? G_EX_ORIGIN_LEFT : G_EX_ORIGIN_RIGHT;
++        }
++        else if (cy > (height * 3) / 4) {
++            origin = (cx < (width * 3) / 5) ? G_EX_ORIGIN_LEFT : G_EX_ORIGIN_RIGHT;
++        }
++
++        ExtendedAlignment result = extAlignment;
++        if (origin == G_EX_ORIGIN_LEFT) {
++            result.leftOrigin = G_EX_ORIGIN_LEFT;
++            result.rightOrigin = G_EX_ORIGIN_LEFT;
++        }
++        else if (origin == G_EX_ORIGIN_RIGHT) {
++            result.leftOrigin = G_EX_ORIGIN_RIGHT;
++            result.rightOrigin = G_EX_ORIGIN_RIGHT;
++            result.leftOffset -= width;
++            result.rightOffset -= width;
++        }
++        return result;
++    }
++
+     void RDP::setScissorAlign(const ExtendedAlignment &extAlignment) {
+         extended.global.scissor = extAlignment;
+     }
+@@ -1083,6 +1124,7 @@ namespace RT64 {
+         extended.global.rect = ExtendedAlignment();
+         extended.global.scissor = ExtendedAlignment();
+         extended.global.rectAspect = G_EX_ASPECT_AUTO;
++        extended.autoAnchor = 0;
+     }
+     
+     void RDP::drawTris(uint32_t triCount, const float *pos, const float *tc, const float *col, uint8_t tile, uint8_t levels) {
+@@ -1160,7 +1202,8 @@ namespace RT64 {
+         drawRect(ulx, uly, lrx, lry, uls, ult, dsdx, dtdy, flip, extended.global.rect);
+     }
+     
+-    void RDP::drawRect(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, int16_t uls, int16_t ult, int16_t dsdx, int16_t dtdy, bool flip, const ExtendedAlignment &extAlignment) {
++    void RDP::drawRect(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, int16_t uls, int16_t ult, int16_t dsdx, int16_t dtdy, bool flip, const ExtendedAlignment &requestedAlignment) {
++        const ExtendedAlignment extAlignment = autoAnchorAlignment(ulx, uly, lrx, lry, requestedAlignment);
+         // Round down the left and top coordinates in fill mode or copy mode.
+         const bool usesFillMode = (otherMode.cycleType() == G_CYC_FILL);
+         const bool usesCopyMode = (otherMode.cycleType() == G_CYC_COPY);
+diff --git a/src/hle/rt64_rdp.h b/src/hle/rt64_rdp.h
+index 84f4e7c..0cdbf34 100644
+--- a/src/hle/rt64_rdp.h
++++ b/src/hle/rt64_rdp.h
+@@ -98,6 +98,11 @@ namespace RT64 {
+             uint16_t scissorLeftOriginStack[RDP_EXTENDED_STACK_SIZE];
+             uint16_t scissorRightOriginStack[RDP_EXTENDED_STACK_SIZE];
+             DrawExtendedFlags drawExtendedFlags;
++
++            // Automatic edge anchoring for 2D rectangles without their own
++            // alignment (Turok: Rage Wars' HUD): by where each rectangle
++            // sits on the screen. 0 off, 1 on.
++            uint8_t autoAnchor = 0;
+         } extended;
+ 
+         struct {
+@@ -194,6 +199,8 @@ namespace RT64 {
+         void fillRect(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry);
+         void fillRect(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, const ExtendedAlignment &extAlignment);
+         void setRectAlign(const ExtendedAlignment &extAlignment);
++        void setAutoAnchor(uint8_t mode);
++        ExtendedAlignment autoAnchorAlignment(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, const ExtendedAlignment &extAlignment) const;
+         void setScissorAlign(const ExtendedAlignment &extAlignment);
+         void setRectAspect(uint8_t aspect);
+         void forceUpscale2D(bool force);

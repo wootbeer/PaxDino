@@ -1,0 +1,13 @@
+diff --git a/recompui/src/config/ui_config_tab_general.cpp b/recompui/src/config/ui_config_tab_general.cpp
+index 296ce0e..d852d00 100644
+--- a/recompui/src/config/ui_config_tab_general.cpp
++++ b/recompui/src/config/ui_config_tab_general.cpp
+@@ -118,7 +118,7 @@ namespace config {
+                 "<br />"
+                 "<br />"
+                 "<b>Note: This option does not allow mouse buttons to activate items. Mouse aiming is intended to be used with inputs that are mapped to mouse movement, such as gyro on Steam Deck.</b>",
+-                is_steam_deck() ? 50.0 : 0.0 // steam deck overrides default to 50%
++                50.0
+             );
+         }
+ 

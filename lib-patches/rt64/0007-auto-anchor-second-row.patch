@@ -1,0 +1,16 @@
+diff --git a/src/hle/rt64_rdp.cpp b/src/hle/rt64_rdp.cpp
+--- a/src/hle/rt64_rdp.cpp
++++ b/src/hle/rt64_rdp.cpp
+@@ -1076,6 +1076,12 @@
+         if (cy < height / 4) {
+             origin = (cx < width / 2) ? G_EX_ORIGIN_LEFT : G_EX_ORIGIN_RIGHT;
+         }
++        // Just below the top quarter (to a third), only well to a side: the
++        // second line of counters (Monkey Tag's) goes with the first, while
++        // what's near the middle stays centred.
++        else if ((cy < height / 3) && ((cx < (width * 3) / 10) || (cx > (width * 7) / 10))) {
++            origin = (cx < width / 2) ? G_EX_ORIGIN_LEFT : G_EX_ORIGIN_RIGHT;
++        }
+         else if (cy > (height * 3) / 4) {
+             origin = (cx < (width * 3) / 5) ? G_EX_ORIGIN_LEFT : G_EX_ORIGIN_RIGHT;
+         }

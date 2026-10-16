@@ -1,0 +1,26 @@
+# Named game functions. Format: name = 0xVRAM;
+
+# --- boot (ROM 0x1000; the IPL3 copies the first MB to 0x80000400)
+trw_entrypoint = 0x00200400;            # sets TLB entry 31 (0x00200000 -> phys 0), then jumps to 0x002A70F0
+trw_SetTLBEntry = 0x00200488;           # helper used only by trw_entrypoint
+trw_boot_main = 0x002A70F0;             # reloads the first MB unless soft reset, clears bss, starts threads
+
+# --- the game's own exception / virtual-memory layer (0x00202268-0x00202CA0).
+# It replaces libultra's handler to service TLB misses: code at 0x00400000 is
+# paged in 4 KB at a time when the console has 4 MB. Under the recompiler no
+# exception ever fires, so these are stubbed or ignored (see turokrw.us.toml).
+trw_ExceptionVectors = 0x00202268;          # TLB-refill and general vector stubs (copied to 0x80000000 / 0x80000180)
+trw_InstallExceptionVectors = 0x002022E0;  # copies the vectors to 0x80000000 / 0x80000180
+trw_CacheFlush0 = 0x0020238C;
+trw_CacheFlush1 = 0x002023A8;
+trw_GetSR = 0x002023C4;
+trw_SetSR = 0x002023D0;
+trw_ReadTLBEntry = 0x002023DC;
+trw_Exception = 0x00202460;
+trw_ExceptionTail0 = 0x002028D0;
+trw_ExceptionTail1 = 0x00202994;
+trw_TLBMissHandler = 0x0023C1D0;        # pages a 4 KB block of the 0x00400000 code in from ROM
+
+# --- the game's virtual memory: ROM data mapped into TLB space
+trw_VmMapRomRegion = 0x0023C76C;        # (size, -, rom) -> virtual base; native in src/game/tlb_views.cpp
+trw_VmUnmapRegion = 0x0023C83C;         # ? sends request type 2 to the VM server; no callers found

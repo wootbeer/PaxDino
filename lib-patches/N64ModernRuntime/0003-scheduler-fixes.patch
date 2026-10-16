@@ -1,0 +1,63 @@
+diff --git a/ultramodern/src/threadqueue.cpp b/ultramodern/src/threadqueue.cpp
+index f9c0fa1..722da4c 100644
+--- a/ultramodern/src/threadqueue.cpp
++++ b/ultramodern/src/threadqueue.cpp
+@@ -43,14 +43,20 @@ PTR(OSThread) ultramodern::thread_queue_pop(RDRAM_ARG PTR(PTR(OSThread)) queue_)
+ bool ultramodern::thread_queue_remove(RDRAM_ARG PTR(PTR(OSThread)) queue_, PTR(OSThread) t_) {
+     debug_printf("[Thread Queue] Removing thread %d from queue 0x%08X\n", TO_PTR(OSThread, t_)->id, (uintptr_t)queue_);
+ 
+-    PTR(PTR(OSThread)) cur = queue_;
+-    while (cur != NULLPTR) {
+-        PTR(OSThread)* cur_ptr = queue_to_ptr(PASS_RDRAM queue_);
+-        if (*cur_ptr == t_) {
+-            *cur_ptr = TO_PTR(OSThread, *cur_ptr)->next;
++    if (queue_ == NULLPTR) {
++        return false;
++    }
++    // Walk the list; the thread can be anywhere in it, not just at the head.
++    PTR(OSThread)* cur = queue_to_ptr(PASS_RDRAM queue_);
++    while (*cur != NULLPTR) {
++        if (*cur == t_) {
++            OSThread* t = TO_PTR(OSThread, t_);
++            *cur = t->next;
++            t->next = NULLPTR;
++            t->queue = NULLPTR;
+             return true;
+         }
+-        cur = TO_PTR(OSThread, *cur_ptr)->next;
++        cur = &TO_PTR(OSThread, *cur)->next;
+     }
+ 
+     return false;
+diff --git a/ultramodern/src/threads.cpp b/ultramodern/src/threads.cpp
+index 6e3ed18..3d75304 100644
+--- a/ultramodern/src/threads.cpp
++++ b/ultramodern/src/threads.cpp
+@@ -165,8 +165,11 @@ void resume_thread(OSThread* t) {
+ }
+ 
+ void run_next_thread(RDRAM_ARG1) {
+-    if (ultramodern::thread_queue_empty(PASS_RDRAM ultramodern::running_queue)) {
+-        throw std::runtime_error("No threads left to run!\n");
++    // With every thread waiting, wait for the next external event (retrace,
++    // audio, DMA, ...) to make one ready, as the console would sit in its
++    // idle loop, instead of giving up.
++    while (ultramodern::thread_queue_empty(PASS_RDRAM ultramodern::running_queue)) {
++        ultramodern::wait_for_external_message(PASS_RDRAM1);
+     }
+ 
+     OSThread* to_run = TO_PTR(OSThread, ultramodern::thread_queue_pop(PASS_RDRAM ultramodern::running_queue));
+@@ -315,8 +318,11 @@ extern "C" void osSetThreadPri(RDRAM_ARG PTR(OSThread) t_, OSPri pri) {
+         t->priority = pri;
+ 
+         if (t_ != ultramodern::this_thread() && t->state != OSThreadState::STOPPED) {
+-            ultramodern::thread_queue_remove(PASS_RDRAM t->queue, t_);
+-            ultramodern::thread_queue_insert(PASS_RDRAM t->queue, t_);
++            // Re-sort the thread in its queue for the new priority, if it's in one.
++            PTR(PTR(OSThread)) queue = t->queue;
++            if (ultramodern::thread_queue_remove(PASS_RDRAM queue, t_)) {
++                ultramodern::thread_queue_insert(PASS_RDRAM queue, t_);
++            }
+         }
+ 
+         ultramodern::check_running_queue(PASS_RDRAM1);

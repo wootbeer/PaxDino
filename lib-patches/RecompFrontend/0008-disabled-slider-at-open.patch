@@ -1,0 +1,13 @@
+--- a/recompui/src/config/ui_config_option.cpp
++++ b/recompui/src/config/ui_config_option.cpp
+@@ -227,6 +227,10 @@
+ void ConfigOptionNumber::update_disabled() {
+     bool disabled = get_disabled();
+     set_enabled(!disabled);
++    // Set on the slider too: one made disabled with the option showed as
++    // enabled until the option changed again.
++    slider->set_enabled(!disabled);
++    slider->queue_update();
+ };
+ 
+ // ConfigOptionString

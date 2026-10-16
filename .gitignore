@@ -1,0 +1,15 @@
+# Game data is never committed: bring your own dump.
+*.z64
+*.n64
+*.v64
+RecompiledFuncs/
+build*/
+rsp/
+tools/asm/
+.vs/
+out/
+dist/
+CMakeUserPresets.json
+__pycache__/
+crash_log.txt
+crash_rdram.bin

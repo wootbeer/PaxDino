@@ -1,0 +1,55 @@
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -147,6 +147,11 @@
+             std::function<void()> callback;
+         };
+         const OptionButton *get_option_button(const std::string &option_id);
++        // The option (by its id) is greyed out while `disabled` returns true;
++        // checked on the UI thread each frame its options page is shown.
++        void set_option_disabled_while(const std::string &option_id, std::function<bool()> disabled);
++        // Whether the option has such a check, and its result in `disabled`.
++        bool get_option_disabled_while(const std::string &option_id, bool &disabled);
+ 
+         // Shows an option of a config tab on the Controls tab instead, above
+         // the input mappings (in the order added).
+--- a/recompui/src/config/ui_config.cpp
++++ b/recompui/src/config/ui_config.cpp
+@@ -210,6 +210,21 @@
+         return it != option_buttons.end() ? &it->second : nullptr;
+     }
+ 
++    static std::unordered_map<std::string, std::function<bool()>> option_disabled_checks;
++
++    void config::set_option_disabled_while(const std::string &option_id, std::function<bool()> disabled) {
++        option_disabled_checks[option_id] = std::move(disabled);
++    }
++
++    bool config::get_option_disabled_while(const std::string &option_id, bool &disabled) {
++        auto it = option_disabled_checks.find(option_id);
++        if (it == option_disabled_checks.end()) {
++            return false;
++        }
++        disabled = it->second();
++        return true;
++    }
++
+     static std::string hotkey_tab;
+ 
+     void config::set_hotkey_tab(const std::string &id) {
+--- a/recompui/src/config/ui_config_page_options_menu.cpp
++++ b/recompui/src/config/ui_config_page_options_menu.cpp
+@@ -53,6 +53,14 @@
+     using ConfigOptionUpdateType = recomp::config::ConfigOptionUpdateType;
+     queue_update();
+ 
++    // Options greyed out by a check (config::set_option_disabled_while).
++    for (auto *element : config_option_elements) {
++        bool disabled;
++        if (config::get_option_disabled_while(element->get_option_id(), disabled)) {
++            config->update_option_disabled(element->get_option_id(), disabled);
++        }
++    }
++
+     auto options_updates = config->get_config_option_updates();
+     bool has_updates = !options_updates.empty();
+     for (auto &option_update : options_updates) {

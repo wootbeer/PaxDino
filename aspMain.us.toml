@@ -1,0 +1,17 @@
+# Turok: Rage Wars' RSP audio microcode (libultra's aspMain), recompiled by
+# N64Recomp's RSPRecomp.
+#
+# Text: n64sym's aspMainTextStart, 0x002D9EB0 (kseg0 0x800D9EB0), ROM 0xDAAB0;
+# it ends with `j 0x1118` + delay slot at IMEM 0x1E94 (size 0xE1C).
+# Data: kseg0 0x800DB4E0, ROM 0xDC0E0.
+text_offset = 0xDAAB0
+text_size = 0xE1C
+text_address = 0x04001080
+rom_file_path = "turokrw.us.z64"
+output_file_path = "rsp/aspMain.cpp"
+output_function_name = "aspMain"
+extra_indirect_branch_targets = [
+    # The command dispatch table: 16 halfwords at data + 0x10.
+    0x1118, 0x1470, 0x11DC, 0x1B38, 0x1214, 0x187C, 0x1254, 0x12D0,
+    0x12EC, 0x1328, 0x140C, 0x1294, 0x1E24, 0x138C, 0x170C, 0x144C,
+]

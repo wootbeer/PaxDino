@@ -1,0 +1,40 @@
+diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -125,6 +125,9 @@
+         // TODO: Explain how to hide/show options
+         recomp::config::Config &create_general_tab(const GeneralTabOptions& options, const std::string &name = config::general::tab_name);
+         void create_controls_tab(const std::string &name = config::controls::tab_name);
++        // Called by create_graphics_tab() right after the MS Anti-Aliasing
++        // option, to add a game's own options there. Set before it.
++        void set_graphics_options_after_msaa(std::function<void(recomp::config::Config &)> add);
+         recomp::config::Config &create_graphics_tab(const std::string &name = config::graphics::tab_name);
+         recomp::config::Config &create_sound_tab(const std::string &name = config::sound::tab_name);
+         void create_mods_tab(const std::string &name = config::mods::tab_name);
+diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
+--- a/recompui/src/config/ui_config_tab_graphics.cpp
++++ b/recompui/src/config/ui_config_tab_graphics.cpp
+@@ -217,6 +217,12 @@
+             apply_graphics_config();
+         }
+ 
++        static std::function<void(recomp::config::Config &)> options_after_msaa;
++
++        void set_graphics_options_after_msaa(std::function<void(recomp::config::Config &)> add) {
++            options_after_msaa = std::move(add);
++        }
++
+         recomp::config::Config &create_graphics_tab(const std::string &name) {
+             created_graphics_config = true;
+ 
+@@ -333,6 +339,10 @@
+                 ultramodern::renderer::Antialiasing::MSAA2X
+             );
+ 
++            if (options_after_msaa) {
++                options_after_msaa(config);
++            }
++
+             config.add_enum_option(
+                 graphics::options::hr_option,
+                 "HUD Placement",

@@ -1,0 +1,45 @@
+diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -155,10 +155,13 @@
+ 
+         // Shows an option of a config tab on the Controls tab instead, above
+         // the input mappings (in the order added).
+-        void show_option_on_controls_tab(const std::string &config_id, const std::string &option_id);
++        // With `player` (0-3), only while that player's bindings are shown
++        // (player 0's in single-player mode).
++        void show_option_on_controls_tab(const std::string &config_id, const std::string &option_id, int player = -1);
+         struct ControlsTabOption {
+             std::string config_id;
+             std::string option_id;
++            int player; // only on this player's page (-1: on every page)
+         };
+         const std::vector<ControlsTabOption> &get_controls_tab_options();
+ 
+diff --git a/recompui/src/config/ui_config.cpp b/recompui/src/config/ui_config.cpp
+--- a/recompui/src/config/ui_config.cpp
++++ b/recompui/src/config/ui_config.cpp
+@@ -197,8 +197,8 @@
+ 
+     static std::vector<config::ControlsTabOption> controls_tab_options;
+ 
+-    void config::show_option_on_controls_tab(const std::string &config_id, const std::string &option_id) {
+-        controls_tab_options.push_back({ config_id, option_id });
++    void config::show_option_on_controls_tab(const std::string &config_id, const std::string &option_id, int player) {
++        controls_tab_options.push_back({ config_id, option_id, player });
+     }
+ 
+     const std::vector<config::ControlsTabOption> &config::get_controls_tab_options() {
+diff --git a/recompui/src/config/ui_config_page_controls.cpp b/recompui/src/config/ui_config_page_controls.cpp
+--- a/recompui/src/config/ui_config_page_controls.cpp
++++ b/recompui/src/config/ui_config_page_controls.cpp
+@@ -527,6 +527,9 @@
+             if (option_config == nullptr || !option_config->has_option(moved.option_id)) {
+                 continue;
+             }
++            if (moved.player >= 0 && moved.player != (multiplayer_enabled ? selected_player : 0)) {
++                continue;
++            }
+             const auto &schema = option_config->get_config_schema();
+             size_t index = schema.options_by_id.at(moved.option_id);
+             std::string config_id = moved.config_id;

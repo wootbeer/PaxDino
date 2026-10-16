@@ -1,0 +1,137 @@
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -148,6 +148,15 @@
+         };
+         const OptionButton *get_option_button(const std::string &option_id);
+ 
++        // Shows an option of a config tab on the Controls tab instead, above
++        // the input mappings (in the order added).
++        void show_option_on_controls_tab(const std::string &config_id, const std::string &option_id);
++        struct ControlsTabOption {
++            std::string config_id;
++            std::string option_id;
++        };
++        const std::vector<ControlsTabOption> &get_controls_tab_options();
++
+         // The tab F2 opens the menu on (none by default: F2 then does nothing).
+         void set_hotkey_tab(const std::string &id);
+         const std::string &get_hotkey_tab();
+--- a/recompui/src/config/ui_config.cpp
++++ b/recompui/src/config/ui_config.cpp
+@@ -195,6 +195,16 @@
+         option_buttons[option_id] = OptionButton{ label, std::move(callback) };
+     }
+ 
++    static std::vector<config::ControlsTabOption> controls_tab_options;
++
++    void config::show_option_on_controls_tab(const std::string &config_id, const std::string &option_id) {
++        controls_tab_options.push_back({ config_id, option_id });
++    }
++
++    const std::vector<config::ControlsTabOption> &config::get_controls_tab_options() {
++        return controls_tab_options;
++    }
++
+     const config::OptionButton *config::get_option_button(const std::string &option_id) {
+         auto it = option_buttons.find(option_id);
+         return it != option_buttons.end() ? &it->second : nullptr;
+--- a/recompui/src/config/ui_config_page_options_menu.cpp
++++ b/recompui/src/config/ui_config_page_options_menu.cpp
+@@ -185,6 +185,16 @@
+         auto schema = config->get_config_schema();
+         for (size_t i = 0; i < schema.options.size(); i++) {
+             auto &config_option = schema.options[i];
++            // Shown on the Controls tab instead (config::show_option_on_controls_tab).
++            bool on_controls_tab = false;
++            for (const auto &moved : config::get_controls_tab_options()) {
++                if (moved.option_id == config_option.id && &config::get_config(moved.config_id) == config) {
++                    on_controls_tab = true;
++                }
++            }
++            if (on_controls_tab) {
++                continue;
++            }
+             ConfigOptionElement *element = nullptr;
+             switch (config_option.type) {
+                 case recomp::config::ConfigOptionType::Enum: {
+--- a/recompui/src/config/ui_config_page_controls.cpp
++++ b/recompui/src/config/ui_config_page_controls.cpp
+@@ -8,6 +8,7 @@
+ #include "elements/ui_select.h"
+ #include "recompinput/profiles.h"
+ #include "recompui/config.h"
++#include "ui_config_option.h"
+ 
+ namespace recompui {
+ 
+@@ -520,6 +521,46 @@
+ 
+         game_input_rows.clear();
+ 
++        // Options of other tabs shown here (config::show_option_on_controls_tab).
++        for (const auto &moved : config::get_controls_tab_options()) {
++            recomp::config::Config *option_config = &config::get_config(moved.config_id);
++            if (option_config == nullptr || !option_config->has_option(moved.option_id)) {
++                continue;
++            }
++            const auto &schema = option_config->get_config_schema();
++            size_t index = schema.options_by_id.at(moved.option_id);
++            std::string config_id = moved.config_id;
++            set_option_value_t set_value = [config_id](const std::string &option_id, recomp::config::ConfigValueVariant value) {
++                config::get_config(config_id).set_option_value(option_id, value);
++            };
++            on_option_hover_t on_hover = [this, config_id](const std::string &option_id) {
++                if (description_container == nullptr) {
++                    return;
++                }
++                const auto &option_schema = config::get_config(config_id).get_config_schema();
++                description_container->set_text_unsafe(option_schema.options[option_schema.options_by_id.at(option_id)].description);
++            };
++            ConfigOptionElement *element = nullptr;
++            switch (schema.options[index].type) {
++                case recomp::config::ConfigOptionType::Enum:
++                    element = context.create_element<ConfigOptionEnum>(body_left_scroll, moved.option_id, index, option_config, set_value, on_hover);
++                    break;
++                case recomp::config::ConfigOptionType::Number:
++                    element = context.create_element<ConfigOptionNumber>(body_left_scroll, moved.option_id, index, option_config, set_value, on_hover);
++                    break;
++                case recomp::config::ConfigOptionType::Bool:
++                    element = context.create_element<ConfigOptionBool>(body_left_scroll, moved.option_id, index, option_config, set_value, on_hover);
++                    break;
++                default:
++                    break;
++            }
++            if (element != nullptr) {
++                element->set_padding_left(GameInputRow::left_padding);
++                element->update_disabled();
++                element->update_hidden();
++            }
++        }
++
+         create_game_input_contexts();
+         set_current_profile_index();
+ 
+--- a/recompui/src/config/ui_config_tab_controls.cpp
++++ b/recompui/src/config/ui_config_tab_controls.cpp
+@@ -18,6 +18,10 @@
+         [](TabCloseContext close_context) {
+             // Save the current control mappings when closing the controls tab.
+             recompinput::profiles::save_controls_config(recomp::get_config_path() / (config::controls::id + ".json"));
++            // And the options of other tabs shown here.
++            for (const auto &moved : config::get_controls_tab_options()) {
++                config::get_config(moved.config_id).save_config();
++            }
+         }
+     );
+ }
+--- a/recompui/src/composites/ui_mod_menu.cpp
++++ b/recompui/src/composites/ui_mod_menu.cpp
+@@ -703,7 +703,7 @@
+         body_empty_container->set_display(Display::None);
+         {
+             context.create_element<Element>(body_empty_container);
+-            context.create_element<Label>(body_empty_container, "You have no mods. Go get some!", LabelStyle::Large);
++            context.create_element<Label>(body_empty_container, "You have no mods.", LabelStyle::Large);
+             context.create_element<Element>(body_empty_container);
+         } // body_empty_container
+ 

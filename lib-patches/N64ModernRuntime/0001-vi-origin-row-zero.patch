@@ -1,0 +1,21 @@
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 17d7a47..5ab5d9f 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -82,6 +82,16 @@ static struct {
+             PTR(void) framebuffer = osVirtualToPhysical(next_state->framebuffer);
+             PTR(void) origin = framebuffer + field_regs->origin;
+ 
++            // libultra's modes start the VI one row into the framebuffer, and
++            // RT64 finds the framebuffer to show by stepping back that row.
++            // Some games' own modes start at row 0 instead, which leaves RT64
++            // with no match and a black screen. Moving those one row in only
++            // affects how RT64 finds the framebuffer, not what it shows.
++            uint32_t pixel_type = next_state->control & 0x3; // 2: 16-bit, 3: 32-bit
++            if (field_regs->origin == 0 && pixel_type >= 2) {
++                origin += common_regs->width * (pixel_type == 3 ? 4 : 2);
++            }
++
+             // Process the VI state flags.
+             uint32_t hStart = common_regs->hStart;
+             if (next_state->state & VI_STATE_BLACK) {

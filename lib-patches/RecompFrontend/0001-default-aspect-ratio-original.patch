@@ -1,0 +1,13 @@
+diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
+index 4fdf81f..7545725 100644
+--- a/recompui/src/config/ui_config_tab_graphics.cpp
++++ b/recompui/src/config/ui_config_tab_graphics.cpp
+@@ -288,7 +288,7 @@ namespace recompui {
+                 "Aspect Ratio",
+                 "Sets the horizontal aspect ratio. <recomp-color primary>Original</recomp-color> uses the game's original 4:3 aspect ratio. <recomp-color primary>Expand</recomp-color> will adjust to match the game window's aspect ratio.",
+                 aspect_ratio_options,
+-                ultramodern::renderer::AspectRatio::Expand
++                ultramodern::renderer::AspectRatio::Original
+             );
+ 
+             config.add_enum_option(

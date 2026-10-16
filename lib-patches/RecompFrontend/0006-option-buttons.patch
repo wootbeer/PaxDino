@@ -1,0 +1,73 @@
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -2,6 +2,9 @@
+ #define _RECOMP_UI_CONFIG_H_
+ 
+ #include <vector>
++#include <functional>
++#include <string>
++#include <unordered_map>
+ 
+ #include "librecomp/config.hpp"
+ #include "elements/ui_modal.h"
+@@ -136,6 +139,15 @@
+         void set_tab(const std::string &id);
+         // The id of the tab shown (or last shown), or an empty string.
+         std::string get_tab();
++        // A button shown under an option (by its id) on its options page;
++        // `callback` runs when it's pressed (on the UI thread).
++        void add_option_button(const std::string &option_id, const std::string &label, std::function<void()> callback);
++        struct OptionButton {
++            std::string label;
++            std::function<void()> callback;
++        };
++        const OptionButton *get_option_button(const std::string &option_id);
++
+         // The tab F2 opens the menu on (none by default: F2 then does nothing).
+         void set_hotkey_tab(const std::string &id);
+         const std::string &get_hotkey_tab();
+--- a/recompui/src/config/ui_config.cpp
++++ b/recompui/src/config/ui_config.cpp
+@@ -189,6 +189,17 @@
+         return config_modal != nullptr ? config_modal->get_selected_tab_id() : std::string{};
+     }
+ 
++    static std::unordered_map<std::string, config::OptionButton> option_buttons;
++
++    void config::add_option_button(const std::string &option_id, const std::string &label, std::function<void()> callback) {
++        option_buttons[option_id] = OptionButton{ label, std::move(callback) };
++    }
++
++    const config::OptionButton *config::get_option_button(const std::string &option_id) {
++        auto it = option_buttons.find(option_id);
++        return it != option_buttons.end() ? &it->second : nullptr;
++    }
++
+     static std::string hotkey_tab;
+ 
+     void config::set_hotkey_tab(const std::string &id) {
+--- a/recompui/src/config/ui_config_page_options_menu.cpp
++++ b/recompui/src/config/ui_config_page_options_menu.cpp
+@@ -1,4 +1,6 @@
+ #include "ui_config_page_options_menu.h"
++#include "recompui/config.h"
++#include "elements/ui_button.h"
+ 
+ 
+ namespace recompui {
+@@ -236,6 +238,15 @@
+             element->update_disabled();
+             element->update_hidden();
+             config_option_elements.push_back(element);
++
++            // A button added for this option (config::add_option_button).
++            if (const config::OptionButton *option_button = config::get_option_button(config_option.id)) {
++                Button *button = context.create_element<Button>(body_left_scroll, option_button->label, ButtonStyle::Secondary, ButtonSize::Small);
++                button->set_width(240.0f);
++                button->set_margin_bottom(16.0f);
++                std::function<void()> callback = option_button->callback;
++                button->add_pressed_callback([callback]() { callback(); });
++            }
+         }
+     }
+ }

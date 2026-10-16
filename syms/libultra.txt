@@ -1,0 +1,166 @@
+# libultra / libc functions in Turok: Rage Wars (USA), identified by hand.
+# Format: name = 0xVRAM;   (TLB-mapped virtual addresses, see docs/ROM_LAYOUT.md)
+#
+# Sources: n64sym signature matches (only those inside the library's address
+# range were kept; its matches inside game code were false positives), the
+# call graph (who calls what, which hardware registers each touches), and the
+# libultra source layout. "?" in a comment marks a name picked from context
+# rather than a byte match. N64Recomp swaps any name on its reimplemented list
+# for the runtime's version, so every such name here must be right.
+
+# --- game-side helpers that N64Recomp knows by name
+memset = 0x0029FF5C;            # (dst, byte, n), byte-fill loop
+
+# --- the game's own TLB helpers (not libultra's osMapTLB signature)
+trw_MapTLB = 0x002AD2A0;        # (index, pagemask, vaddr, even_paddr, odd_paddr@sp+0x10, cacheattr@sp+0x14)
+osUnmapTLB = 0x002AD320;
+
+# --- libultra, 0x002B71E0-0x002BD8A4
+sqrtf = 0x002B71E0;
+trw_osAiGetStatus = 0x002B71F0;   # osAiGetStatus under another name: the runtime's never reports a full FIFO, which the audio thread loops on (src/main/main.cpp)
+osAiSetFrequency = 0x002B7210;
+osAiSetNextBuffer = 0x002B7330;
+__osAiDeviceBusy = 0x002B73C0;
+osContStartQuery = 0x002B73E0;
+osContGetQuery = 0x002B7468;
+osContStartReadData = 0x002B7490;
+osContGetReadData = 0x002B7524;
+__osPackReadData = 0x002B75BC;
+osContReset = 0x002B7670;       # ? sends the reset command, then reads init data
+__osPackResetData = 0x002B777C; # ?
+osContInit = 0x002B77B0;
+__osPackRequestData = 0x002B7950;
+__osContGetInitData = 0x002B7A08;
+osDpSetNextBuffer = 0x002B7AC0;
+__osDpDeviceBusy = 0x002B7B60;
+osMotorStop = 0x002B7B80;       # ? stop/start told apart by the rumble init caller (0x002641E8)
+osMotorStart = 0x002B7D44;      # ?
+trw_osMotorInit = 0x002B7F08;   # osMotorInit under another name, so a Controller Pak port can say so (src/game/controller_pak_hle.cpp)
+__osContRamRead = 0x002B83F0;
+__osPackRamReadData = 0x002B8620;
+__osContRamWrite = 0x002B87B0;
+__osPackRamWriteData = 0x002B89D0;
+__osContDataCrc = 0x002B8B70;
+__osContAddressCrc = 0x002B8BB8;
+osPiStartDma = 0x002B8C20;
+osPiGetCmdQueue = 0x002B8CD0;
+osCreatePiManager = 0x002B8D00;
+trw_PiRomHandleInit = 0x002B8E80;  # ? reads the cartridge header with osPiRawReadIo into a PI handle; no callers (stubbed)
+__osDevMgrMain = 0x002B8F40;
+osCartRomInit = 0x002B97A0;
+__osPiCreateAccessQueue = 0x002B9880;
+__osPiGetAccess = 0x002B98D4;
+__osPiRelAccess = 0x002B9940;
+trw_osPiRawStartDma = 0x002B9970; # osPiRawStartDma under another name: the game's DMA thread (0x0025651C) calls it directly, and the runtime only has a stub (src/game/pi_dma.cpp)
+osPiRawReadIo = 0x002B9A50;
+__osSiCreateAccessQueue = 0x002B9AF0;
+__osSiGetAccess = 0x002B9B44;
+__osSiRelAccess = 0x002B9BB0;
+__osSiRawStartDma = 0x002B9BE0;
+__osSiDeviceBusy = 0x002B9CA0;
+_VirtualToPhysicalTask = 0x002B9CC0;
+osSpTaskLoad = 0x002B9DA8;
+osSpTaskStartGo = 0x002B9EAC;
+__osSpDeviceBusy = 0x002B9EE0;
+__osSpRawStartDma = 0x002B9F00;
+__osSpSetPc = 0x002BA000;
+__osSpSetStatus = 0x002BA030;
+osSpTaskYield = 0x002BA050;
+osSpTaskYielded = 0x002BA070;
+__osSpGetStatus = 0x002BA0C0;
+osViBlack = 0x002BA0E0;
+__osViInit = 0x002BA140;
+osViGetCurrentFramebuffer = 0x002BA240;
+osCreateViManager = 0x002BA280;
+viMgrMain = 0x002BA3F0;
+__osViGetCurrentContext = 0x002BA570;
+osViSetEvent = 0x002BA580;
+osViSetMode = 0x002BA5E0;
+osViSetSpecialFeatures = 0x002BA630;
+osViSetYScale = 0x002BA7A0;
+osViSwapBuffer = 0x002BA7F0;
+__osViSwapContext = 0x002BA840;
+__assert = 0x002BAB80;
+osCreateMesgQueue = 0x002BAB90;
+osCreateThread = 0x002BABC0;
+osGetCurrFaultedThread = 0x002BACA0;
+osGetThreadId = 0x002BACB0;
+osGetThreadPri = 0x002BACD0;
+osGetTime = 0x002BACF0;
+osInitialize = 0x002BAD70;
+__osSiRawReadIo = 0x002BAF90;   # n64sym said __osSpRawReadIo, but it waits on __osSiDeviceBusy
+__osSiRawWriteIo = 0x002BB020;
+osJamMesg = 0x002BB090;
+osRecvMesg = 0x002BB1D0;
+__osResetGlobalIntMask = 0x002BB300;
+osSendMesg = 0x002BB350;
+osSetEventMesg = 0x002BB480;
+__osSetGlobalIntMask = 0x002BB4E0;
+osSetThreadPri = 0x002BB520;
+osSetTimer = 0x002BB5F0;
+osStartThread = 0x002BB680;
+__osDequeueThread = 0x002BB7A0;
+__osTimerInterrupt = 0x002BB7E0;
+__osTimerServicesInit = 0x002BB928;
+__osSetTimerIntr = 0x002BB97C;
+__osInsertTimer = 0x002BB9DC;
+osVirtualToPhysical = 0x002BBAF0;
+osYieldThread = 0x002BBB50;
+__osExceptionPreamble = 0x002BBB98;
+__osException = 0x002BBBB0;
+send_mesg = 0x002BC198;         # also holds handle_CPU
+__osEnqueueAndYield = 0x002BC29C;
+__osEnqueueThread = 0x002BC438;
+__osPopThread = 0x002BC488;
+__osDispatchThread = 0x002BC4A0;
+__osCleanupThread = 0x002BC69C;
+__osLeoInterrupt = 0x002BC6A8;  # ? PI-interrupt handler reached only from __osException
+osDestroyThread = 0x002BCD50;
+osGetCount = 0x002BCE30;
+__osGetFpcCsr = 0x002BCE40;
+__osGetSR = 0x002BCE50;
+__osDisableInt = 0x002BCE60;
+__osRestoreInt = 0x002BCE80;
+osInvalDCache = 0x002BCEA0;
+osInvalICache = 0x002BCF40;
+__osProbeTLB = 0x002BCFB0;
+__osSetCompare = 0x002BD080;
+__osSetFpcCsr = 0x002BD090;
+osSetIntMask = 0x002BD0A0;
+__osSetSR = 0x002BD150;
+osUnmapTLBAll = 0x002BD160;
+osWritebackDCache = 0x002BD1B0;
+osWritebackDCacheAll = 0x002BD220;
+sprintf = 0x002BD250;
+proutSprintf = 0x002BD2A8;      # passed to _Printf by pointer
+memcpy = 0x002BD2D0;
+strchr = 0x002BD2F8;
+strlen = 0x002BD330;
+_Printf = 0x002BD360;
+
+# --- Controller Pak filesystem (libultra's pfs), in the second code block.
+# Named from the call graph (which ones read/write pak RAM, inodes and the
+# directory) and the game's call sites, whose arguments match libultra's
+# signatures; the game's OSPfs structs are at 0x8014B280, 0x68 bytes each.
+# Naming the public ones makes N64Recomp route them to
+# src/game/controller_pak_hle.cpp (.mpk files).
+osPfsAllocateFile = 0x004460F0;
+__osPfsDeclearPage = 0x00446494;
+osPfsDeleteFile = 0x004466F0;
+__osPfsReleasePages = 0x0044691C;
+osPfsFileState = 0x00446B90;
+osPfsFreeBlocks = 0x00446DD0;
+__osPfsRequestOneChannel = 0x00446EF0;   # ? SI request/response for one port
+osPfsInitPak = 0x004470D0;
+osPfsChecker = 0x004472A0;              # here only called from osPfsInitPak
+__osPfsGetStatus = 0x00447828;          # ?
+osPfsReadWriteFile = 0x00447C60;
+osPfsRepairId = 0x004480A0;
+osPfsFindFile = 0x00448250;
+__osRepairPackId = 0x004483D0;
+__osCheckPackId = 0x004486B8;
+__osGetId = 0x00448828;                 # ?
+__osPfsRWInode = 0x00448A14;
+__osIdCheckSum = 0x00448D24;
+__osCheckId = 0x00448D6C;
+__osPfsSelectBank = 0x00448E34;

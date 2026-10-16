@@ -1,0 +1,503 @@
+# N64Recomp config for Turok: Rage Wars (USA, NRWE, z64 SHA-1
+# 9f8cb190831945f6f707aa8c2b20e04fa4276795).
+#
+# The game runs its code through the TLB (docs/ROM_LAYOUT.md): the first MB
+# of ROM is code at 0x00200400 (TLB entry 31 maps 0x00200000 onto physical
+# 0), and a second block at ROM 0x164000 is code at 0x00400000 (TLB entry 0).
+# Data is reached through kseg0 (0x80xxxxxx) as usual. The symbol file's
+# sections follow the addresses the code itself uses.
+
+[input]
+# trw_entrypoint: sets the stack, sets TLB entry 31, then `jalr`s to
+# trw_boot_main (0x002A70F0). The TLB writes are patched out below; the
+# runtime sets up those views itself (src/game/tlb_views.cpp).
+entrypoint = 0x00200400
+output_func_path = "RecompiledFuncs"
+rom_file_path = "turokrw.us.z64"
+symbols_file_path = "TurokRWSyms/turokrw.us.syms.toml"
+
+[patches]
+# Never run under the recompiler: they install or are the game's own
+# exception handler (TLB misses), or set up the TLB, which src/game/tlb_views.cpp
+# replaces. Stubbed (empty bodies) where something still calls them.
+stubs = [
+    "trw_InstallExceptionVectors",
+    "trw_CacheFlush0",
+    "trw_CacheFlush1",
+    "trw_GetSR",
+    "trw_SetSR",
+    "trw_ReadTLBEntry",
+    "trw_MapTLB",
+    # libultra ROM-handle init with no callers; it uses osPiRawReadIo,
+    # which the runtime doesn't provide
+    "trw_PiRomHandleInit",
+]
+ignored = [
+    # osPiRawStartDma, implemented natively in src/game/pi_dma.cpp
+    "trw_osPiRawStartDma",
+    # osAiGetStatus, native in src/main/main.cpp (audio FIFO model)
+    "trw_osAiGetStatus",
+    # osMotorInit, native in src/game/controller_pak_hle.cpp (per-port pak)
+    "trw_osMotorInit",
+    # maps ROM data into TLB space; native in src/game/tlb_views.cpp
+    "trw_VmMapRomRegion",
+    "trw_SetTLBEntry",
+    "trw_ExceptionVectors",
+    "trw_Exception",
+    "trw_ExceptionTail0",
+    "trw_ExceptionTail1",
+]
+
+# The game's DMA thread waits for the PI interrupt it registers here
+# (osSetEventMesg(OS_EVENT_PI, dma + 0xA48, 0x7D1)). The runtime doesn't
+# track OS_EVENT_PI, so src/game/pi_dma.cpp records it to post completions.
+[[patches.hook]]
+func = "func_00256220"
+before_vram = 0x0025626C
+text = "    trw_set_pi_event(rdram, ctx->r5, 0x7D1);"
+
+# libultra's osCreateViManager sets a default VI mode (__osViInit, NTSC
+# LPN1), and the game relies on it: it waits for retraces before it ever
+# calls osViSetMode. The runtime's osCreateViManager sets none, and its VI
+# thread sends no retrace messages until a mode is set, so set the same
+# default (the game's own osViModeNtscLpn1, 0x800D31E0) right after the call.
+[[patches.hook]]
+func = "func_00291334"
+before_vram = 0x00291358
+text = "    osViSetMode(rdram, (int32_t)0x800D31E0);"
+
+# trw_boot_main reloads the first MB straight from the cartridge bus (lw from
+# 0xB0001000) unless it detects a soft reset. The runtime has already loaded
+# that MB, so always take the soft-reset branch: bnez $v0 -> b.
+[[patches.instruction]]
+func = "trw_boot_main"
+vram = 0x002A71C4
+value = 0x10000054
+
+# func_002372B4 draws a thin black border (fill rectangles, 2-3 pixels) around
+# each player's view, hiding the screen edges on a TV. With the picture
+# expanded to widescreen its sides land at the old 4:3 edges as two vertical
+# lines, so those are dropped then (src/game/widescreen.cpp). The top and
+# bottom stay: they cover a row the view doesn't draw.
+[[patches.hook]]
+func = "func_002372B4"
+before_vram = 0x002372B4
+text = "    trw_border_begin(rdram);"
+
+[[patches.hook]]
+func = "func_002372B4"
+before_vram = 0x00237E58
+text = "    trw_border_end(rdram);"
+
+# HUD anchoring in widescreen: func_0022A36C goes through the players and
+# draws each one's HUD with func_0021EED8 (2D sprites through func_002AAB58).
+# src/game/widescreen.cpp writes RT64 commands around that call that anchor
+# the HUD's pieces to the screen edges.
+[[patches.hook]]
+func = "func_0022A36C"
+before_vram = 0x0022A3A4
+text = "    trw_hud_begin(rdram, ctx->r16);"
+
+[[patches.hook]]
+func = "func_0022A36C"
+before_vram = 0x0022A3AC
+text = "    trw_hud_end(rdram);"
+
+# The weapon wheel (func_002183E8, from the HUD routine) and the team select
+# drawn after it (func_00218F08, given the player + 0xCCC) stay centred: the
+# HUD's automatic anchoring would send their tiles in the top quarter to the
+# screen's sides (the wheel's as it turns, the top team's always).
+[[patches.hook]]
+func = "func_0021EED8"
+before_vram = 0x0021EFBC
+text = "    trw_hud_anchor(rdram, 0);"
+
+[[patches.hook]]
+func = "func_0021EED8"
+before_vram = 0x0021EFD4
+text = "    trw_hud_anchor(rdram, 1);"
+
+# The name of a player's last kill, by the skulls (src/game/widescreen.cpp).
+[[patches.hook]]
+func = "func_0021EED8"
+before_vram = 0x0021FEB8
+text = "    trw_kill_name_colour(rdram, ctx->r17);"
+
+# The screen fade extended over the bars in widescreen (src/game/widescreen.cpp).
+[[patches.hook]]
+func = "func_00292220"
+before_vram = 0x00292388
+text = "    trw_fade_begin(rdram, ctx->r29);"
+
+# Clear the colour buffer at the start of each front-end frame in widescreen
+# (src/game/widescreen.cpp).
+[[patches.hook]]
+func = "func_00291B00"
+before_vram = 0x00291EE8
+text = "    trw_frame_buffers_set(rdram);"
+
+# Menus in widescreen (src/game/widescreen.cpp): drawn as in 4:3, with the
+# background images also drawn stretched into the bars either side.
+[[patches.hook]]
+func = "func_0040DB84"
+before_vram = 0x0040DB84
+text = "    trw_menu_widget_begin(rdram, ctx->r4, ctx->r29);"
+
+[[patches.hook]]
+func = "func_0040DB84"
+before_vram = 0x0040E140
+text = "    trw_menu_widget_end(rdram, ctx->r29 + 0x140);"
+
+[[patches.hook]]
+func = "func_0040DB84"
+before_vram = 0x0040DC10
+text = "    if (trw_menu_image_hidden(rdram, ctx->r16)) goto L_0040E140;\n    trw_menu_image_begin(rdram, ctx->r16);"
+
+[[patches.hook]]
+func = "func_0040DB84"
+before_vram = 0x0040DC18
+text = "    trw_menu_image_end(rdram);"
+
+# Two menu functions walk a jump table with a moving pointer (`lw $v0, 0($sN)`
+# / `jr $v0`, then `addiu $sN, $sN, 4` each loop) instead of indexing it, so
+# N64Recomp sees an indirect tail call and the generated code calls a case
+# label as a function. Each table only maps the loop counter to a text ID, so
+# the jump is replaced with that arithmetic.
+# func_004288E0 (table 0x800DC6A0): counter $s1 -> $s0 = 0x149, then 0x14B + n.
+[[patches.instruction]]
+func = "func_004288E0"
+vram = 0x00428910
+value = 0x2630014B  # addiu $s0, $s1, 0x14B
+[[patches.instruction]]
+func = "func_004288E0"
+vram = 0x00428914
+value = 0x1620000A  # bnez $s1, 0x00428940 (else fall into the 0x149 case)
+[[patches.instruction]]
+func = "func_004288E0"
+vram = 0x00428918
+value = 0x00000000  # nop
+# func_0042144C (table 0x800DC240): counter $s0 -> $a1 = 0x3B8 + n; every
+# case loads the same $a0, so all go through the first case's code.
+[[patches.instruction]]
+func = "func_0042144C"
+vram = 0x004214C8
+value = 0x08108562  # j 0x00421588
+[[patches.instruction]]
+func = "func_0042144C"
+vram = 0x004214CC
+value = 0x00000000  # nop
+[[patches.instruction]]
+func = "func_0042144C"
+vram = 0x00421594
+value = 0x260503B8  # addiu $a1, $s0, 0x3B8
+
+# trw_entrypoint's cop0/TLB instructions and its call to trw_SetTLBEntry,
+# and the `break` after its jalr to trw_boot_main: on hardware that call never
+# returns (the first osStartThread switches away for good), but the runtime's
+# osStartThread returns to the entry thread, which then just ends.
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x0020040C
+value = 0x00000000
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x00200410
+value = 0x00000000
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x00200418
+value = 0x00000000
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x0020041C
+value = 0x00000000
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x00200420
+value = 0x00000000
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x00200428
+value = 0x00000000
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x0020043C
+value = 0x00000000
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x0020046C
+value = 0x00000000
+[[patches.instruction]]
+func = "recomp_entrypoint"
+vram = 0x00200484
+value = 0x00000000
+
+# The rare hang loading a level. The controller reads run from the scheduler
+# (func_00263A94): each retrace it collects the last read (func_002636E0,
+# waiting for its SI message when the state at 0x80109BB8 is 0 or 1) and
+# starts the next. Every 60 frames the main thread sets the state to 1 (query
+# the controllers) without the lock, which is only right while a read is in
+# flight. The pak and rumble setup when a level loads leaves the state at 2
+# (nothing in flight); set to 1 then, the scheduler waited for a message that
+# never came, and the frame never finished. The write only goes through over
+# state 0 now (it comes back 60 frames later).
+[[patches.hook]]
+func = "func_002A1FD0"
+before_vram = 0x002A2108
+text = "    if (MEM_BU(0, (gpr)(int32_t)0x80109BB8) != 0) ctx->r3 = MEM_BU(0, (gpr)(int32_t)0x80109BB8);"
+
+# The game's Cheats menu (Z on the main menu, state 0x1C) is left out: its
+# settings (All Characters, All Weapons, Unlimited Ammo, Extra Modes) are on
+# the menu's Cheats tab instead (F2; src/main/extras_config.cpp). The main
+# menu's handler for event 0xA (func_004244B4) opened it on Z (0xA); the
+# value compared with becomes -1, which no press is.
+[[patches.instruction]]
+func = "func_004244B4"
+vram = 0x004244C8
+value = 0x2402FFFF  # addiu $v0, $zero, -1 (was 0xA)
+
+# Enhancements tab: Medals in Bot Matches. Medals are awarded at the end of a
+# match (func_004245C0) only if func_00426454 counts two or more human
+# players who took part (a per-port count at 0x800FD140 of at least 76, kept
+# by func_0021A9A4; bots don't count; a3 here). While the option is on, one
+# will do.
+[[patches.hook]]
+func = "func_00426454"
+before_vram = 0x004264D0
+text = "    if (trw_option(11) && (int32_t)ctx->r7 >= 1) ctx->r7 = 2;"
+
+# Enhancements tab: Demo When Idle. The title screen's update (func_002A1FD0)
+# starts the attract demo (func_0042E080) once its idle timer at 0x800CD940
+# passes a limit, but only while a1 is 1 (the title screen, or menu 0x18).
+# With the option off, a1 is 0 here, so the demo never starts.
+[[patches.hook]]
+func = "func_002A1FD0"
+before_vram = 0x002A205C
+text = "    if (!trw_option(15)) ctx->r5 = 0;"
+
+# Enhancements tab: Custom Music (src/main/custom_music.cpp). The music
+# object (0x80107DE4, s1 here) has loaded the song it was asked for (+0x28)
+# and is about to set it up on its sequence player (+0x14); song 0 is "no
+# song", whose load fails and is retried, so it never gets here. The file
+# playing instead follows the volumes the game sets on that player, which is
+# given 0, and stops with it.
+[[patches.hook]]
+func = "func_0025D3F0"
+before_vram = 0x0025D588
+text = "    trw_music_song(rdram, (uint32_t)MEM_W(0x28, ctx->r17), (uint32_t)MEM_W(0x14, ctx->r17));"
+
+[[patches.hook]]
+func = "n_alSeqpSetVol"
+before_vram = 0x002AFE90
+text = "    ctx->r5 = (gpr)(int64_t)(int16_t)trw_music_seqp_vol(rdram, (uint32_t)ctx->r4, (int32_t)(int16_t)ctx->r5);"
+
+[[patches.hook]]
+func = "n_alSeqpStop"
+before_vram = 0x002AFEC0
+text = "    trw_music_seqp_stop(rdram, (uint32_t)ctx->r4);"
+
+# Enhancements tab: Weapons (src/game/weapon_rules.cpp). The three functions
+# that switch a player to the weapon wanted (+0x770, read into s0 and s2;
+# the player in s1) switch to an allowed one instead.
+[[patches.hook]]
+func = "func_0022FD8C"
+before_vram = 0x0022FDBC
+text = "    { int32_t w = trw_allowed_weapon(rdram, ctx->r17, (int32_t)ctx->r16); ctx->r16 = (gpr)w; ctx->r18 = (gpr)(w & 0xFFFF); }"
+
+[[patches.hook]]
+func = "func_0022FEE4"
+before_vram = 0x0022FF14
+text = "    { int32_t w = trw_allowed_weapon(rdram, ctx->r17, (int32_t)ctx->r16); ctx->r16 = (gpr)w; ctx->r18 = (gpr)(w & 0xFFFF); }"
+
+[[patches.hook]]
+func = "func_002325DC"
+before_vram = 0x0023260C
+text = "    { int32_t w = trw_allowed_weapon(rdram, ctx->r17, (int32_t)ctx->r16); ctx->r16 = (gpr)w; ctx->r18 = (gpr)(w & 0xFFFF); }"
+
+# Enhancements tab: Loadout Restrictions. A player (re)spawning in a match
+# (func_0021AF6C, the player in s0: 50 bullet ammo, no energy or explosive)
+# also gets the allowed kind's.
+[[patches.hook]]
+func = "func_0021AF6C"
+before_vram = 0x0021B08C
+text = "    trw_starting_ammo(rdram, ctx->r16);"
+
+# Enhancements tab: Loadout Restrictions. The HUD's three ammo counters (func_0021EA30)
+# leave out the kinds of ammo no allowed weapon uses.
+[[patches.hook]]
+func = "func_0021EA30"
+before_vram = 0x0021EC04
+text = "    if (!trw_ammo_counter_shown(0)) goto L_0021ECD4;"
+
+[[patches.hook]]
+func = "func_0021EA30"
+before_vram = 0x0021ECEC
+text = "    if (!trw_ammo_counter_shown(1)) goto L_0021EDBC;"
+
+[[patches.hook]]
+func = "func_0021EA30"
+before_vram = 0x0021EDD4
+text = "    if (!trw_ammo_counter_shown(2)) goto L_0021EEA4;"
+
+# Enhancements tab: Crosshair (src/main/crosshair.cpp). HUD sprite 751 is the
+# crosshair; with a style other than the game's own it isn't drawn
+# (func_002AAB58 returns 1 as it does after drawing), and the new one is drawn
+# over the picture where it would have been.
+[[patches.hook]]
+func = "func_002AAB58"
+before_vram = 0x002AAB58
+text = "    if (trw_crosshair_sprite(rdram, ctx->r4, ctx->r6, ctx->r7, ctx->r29)) { ctx->r2 = 1; return; }"
+
+# Enhancements tab: Randomize Game Music. func_0025E274(song) is the game
+# asking for a song (a match asks for 56 + a random 0-3 at its start); the
+# request may be swapped for another of the game's match songs.
+[[patches.hook]]
+func = "func_0025E274"
+before_vram = 0x0025E274
+text = "    ctx->r4 = (gpr)(int64_t)trw_music_request(rdram, (int32_t)ctx->r4);"
+
+# The co-op Frag Tag trials could never be won (the bug 1.1 fixed). Trials run
+# Frag Tag with a frag limit of 0 (it ends on the tag limit, func_002281CC,
+# which records the win). The frag-limit check (func_0022804C), run again at
+# the end (func_0042D240), then took every player as having reached a limit
+# of 0, and when the first in the list was a bot it overwrote the result with
+# a failure. 1.1 returns "not reached" when the limit (0x801407E0 + 0x18) is
+# 0; the same here.
+[[patches.hook]]
+func = "func_0022804C"
+before_vram = 0x0022804C
+text = "    if (MEM_W(0, (gpr)(int32_t)0x801407F8) == 0) { ctx->r2 = 0; return; }"
+
+# Unlocks tab: All Levels. The game asks whether something is
+# unlocked through this bit test (func_002655F0(bits, n)); while the options
+# is on it answers "set" for the profile's level bits
+# (src/game/extras.cpp, trw_unlocked_bit). The profile isn't changed.
+[[patches.hook]]
+func = "func_002655F0"
+before_vram = 0x002655F0
+text = "    if (trw_unlocked_bit(rdram, ctx->r4, ctx->r5)) { ctx->r2 = 1; return; }"
+
+# Unlocks tab: All Skins. C-Up on character select (func_00420214) steps to
+# the next skin, wrapping at the count in the player's profile (a byte per
+# character id from +0x57, raised as medals are earned by func_00425BC0;
+# read into v1 from 0x800FCB57 + v0). While the option is on the count is
+# the full one.
+[[patches.hook]]
+func = "func_00420214"
+before_vram = 0x004202D0
+text = "    ctx->r3 = trw_skin_count(rdram, ctx->r2, ctx->r3);"
+
+# The same count where the skin boxes are shown (func_004204A8) and where a
+# skin is picked at random (func_004208C0).
+[[patches.hook]]
+func = "func_004204A8"
+before_vram = 0x004205BC
+text = "    ctx->r18 = trw_skin_count(rdram, ctx->r2, ctx->r18);"
+
+[[patches.hook]]
+func = "func_004208C0"
+before_vram = 0x00420AD4
+text = "    ctx->r16 = trw_skin_count(rdram, ctx->r17, ctx->r16);"
+
+# The trials map copies the profile's level bits into its own (the map at
+# *0x800DF2F0, bits at +0xA74; func_004271E8) and works out from them which
+# nodes are lit, once, when it opens. With every level answered as open, every
+# node was lit and the cursor's node no longer stood out. While the map is
+# built the bit test answers from the save (so it looks as it would); after
+# that the map's own bits answer "open" (moving onto a level and starting it).
+[[patches.hook]]
+func = "func_004271E8"
+before_vram = 0x004271E8
+text = "    trw_trial_map_build(1);"
+
+[[patches.hook]]
+func = "func_004271E8"
+before_vram = 0x0042741C
+text = "    trw_trial_map_build(0);"
+
+# Weapon Reverb (Sound tab, src/game/weapon_reverb.cpp). A sound effect is
+# asked for through func_0025DDF4 (effect, position) or func_0025DE60 (the
+# same and a volume; animations' sound events); the sound starts within it.
+[[patches.hook]]
+func = "func_0025DDF4"
+before_vram = 0x0025DDF4
+text = "    trw_sfx_request_begin((int32_t)ctx->r4);"
+
+[[patches.hook]]
+func = "func_0025DDF4"
+before_vram = 0x0025DE58
+text = "    trw_sfx_request_end();"
+
+[[patches.hook]]
+func = "func_0025DE60"
+before_vram = 0x0025DE60
+text = "    trw_sfx_request_begin((int32_t)ctx->r4);"
+
+[[patches.hook]]
+func = "func_0025DE60"
+before_vram = 0x0025DECC
+text = "    trw_sfx_request_end();"
+
+# The effects' and projectiles' calls: a spawned effect's or projectile's
+# sound (func_00280014), its flight and hits (func_00281BF4, func_00283DAC),
+# and impacts (func_0027CC50, func_0027D3FC).
+[[patches.hook]]
+func = "func_00280014"
+before_vram = 0x00281954
+text = "    trw_sfx_world_site();"
+
+[[patches.hook]]
+func = "func_00281BF4"
+before_vram = 0x00282010
+text = "    trw_sfx_world_site();"
+
+[[patches.hook]]
+func = "func_00283DAC"
+before_vram = 0x00283E90
+text = "    trw_sfx_world_site();"
+
+[[patches.hook]]
+func = "func_0027CC50"
+before_vram = 0x0027D1AC
+text = "    trw_sfx_world_site();"
+
+[[patches.hook]]
+func = "func_0027D3FC"
+before_vram = 0x0027D86C
+text = "    trw_sfx_world_site();"
+
+# The players' movement code's calls (footsteps, landing): never.
+[[patches.hook]]
+func = "func_0021B468"
+before_vram = 0x0021BC58
+text = "    trw_sfx_local_site();"
+
+[[patches.hook]]
+func = "func_0021BFBC"
+before_vram = 0x0021C250
+text = "    trw_sfx_local_site();"
+
+# A sound starting (func_00257794): the reverb amount it's given.
+[[patches.hook]]
+func = "func_00257794"
+before_vram = 0x002578B4
+text = "    ctx->r5 = (gpr)(int32_t)trw_sfx_fx_mix((int32_t)ctx->r5);"
+
+# Look Spring Override (Controls tab, src/main/fps_controls.cpp): the look
+# code's easings of the pitch (+0x724, toward the angle its look input points
+# at): for the mouse's player, with the override on, toward the pitch the
+# mouse set. The target is in a1 (moved there from an FPR just before each call).
+[[patches.hook]]
+func = "func_002231B0"
+before_vram = 0x002233A4
+text = "    ctx->r5 = (gpr)(int32_t)trw_look_pitch_target(rdram, (uint32_t)ctx->r16, (uint32_t)ctx->r5);"
+
+[[patches.hook]]
+func = "func_00224078"
+before_vram = 0x00224120
+text = "    ctx->r5 = (gpr)(int32_t)trw_look_pitch_target(rdram, (uint32_t)ctx->r16, (uint32_t)ctx->r5);"
+
+[[patches.hook]]
+func = "func_002251B8"
+before_vram = 0x00225340
+text = "    ctx->r5 = (gpr)(int32_t)trw_look_pitch_target(rdram, (uint32_t)ctx->r16, (uint32_t)ctx->r5);"

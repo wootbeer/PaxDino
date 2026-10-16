@@ -1,0 +1,22 @@
+diff --git a/src/gbi/rt64_gbi.cpp b/src/gbi/rt64_gbi.cpp
+index 7006549..f6c16d9 100644
+--- a/src/gbi/rt64_gbi.cpp
++++ b/src/gbi/rt64_gbi.cpp
+@@ -118,7 +118,7 @@ namespace RT64 {
+     const GBIInstance   F3DEX2_NON_FIFO_2_03      = { "F3DEX2.NoN.fifo 2.03",                      GBIUCode::F3DEX2,      { false,  true,   false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   F3DEX2_NON_FIFO_2_04      = { "F3DEX2.NoN.fifo 2.04",                      GBIUCode::F3DEX2,      { false,  true,   false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   F3DEX2_NON_FIFO_2_05      = { "F3DEX2.NoN.fifo 2.05",                      GBIUCode::F3DEX2,      { false,  true,   false,  false,  false } };
+-    const GBIInstance   F3DEX2_NON_FIFO_ACCLAIM   = { "F3DEX2.NoN.fifo 2.05 (Acclaim)",            GBIUCode::Unknown,     { false,  true,   false,  false,  false } }; // Needs confirmation.
++    const GBIInstance   F3DEX2_NON_FIFO_ACCLAIM   = { "F3DEX2.NoN.fifo 2.05 (Acclaim)",            GBIUCode::F3DEX2,      { false,  true,   false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   F3DEX2_NON_FIFO_2_06      = { "F3DEX2.NoN.fifo 2.06",                      GBIUCode::F3DEX2,      { false,  true,   false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   F3DEX2_NON_FIFO_2_07      = { "F3DEX2.NoN.fifo 2.07",                      GBIUCode::F3DEX2,      { false,  true,   false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   F3DEX2_NON_FIFO_2_08      = { "F3DEX2.NoN.fifo 2.08",                      GBIUCode::F3DEX2,      { false,  true,   false,  false,  false } };
+@@ -150,7 +150,7 @@ namespace RT64 {
+     const GBIInstance   L3DEX_1_23                = { "L3DEX 1.23",                                GBIUCode::Unknown,     { false,  false,  false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   L3DEX_1_23_A              = { "L3DEX 1.23 (Variant)",                      GBIUCode::Unknown,     { false,  false,  false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   L3DEX2_FIFO_2_05          = { "L3DEX2.fifo 2.05",                          GBIUCode::L3DEX2,      { false,  false,  false,  false,  false } }; // Needs confirmation.
+-    const GBIInstance   L3DEX2_FIFO_ACCLAIM       = { "L3DEX2.fifo 2.05 (Acclaim)",                GBIUCode::Unknown,     { false,  false,  false,  false,  false } }; // Needs confirmation.
++    const GBIInstance   L3DEX2_FIFO_ACCLAIM       = { "L3DEX2.fifo 2.05 (Acclaim)",                GBIUCode::L3DEX2,      { false,  false,  false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   L3DEX2_FIFO_2_08          = { "L3DEX2.fifo 2.08",                          GBIUCode::L3DEX2,      { false,  false,  false,  false,  false } }; // Needs confirmation.
+     const GBIInstance   ZSORTP_0_33               = { "ZSortp 0.33",                               GBIUCode::Unknown,     { false,  false,  false,  false,  false } }; // Needs confirmation.
+     

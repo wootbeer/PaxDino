@@ -1,0 +1,54 @@
+# Audio-library (libaudio) functions matched by n64sym, kept only inside the
+# library's address range (0x002AE000-0x002B71E0) and without its "_text_XXXX"
+# labels, which mark offsets inside a function rather than function starts.
+# None of these names are on N64Recomp's replacement lists; they only label
+# boundaries.
+__readVarLen = 0x002AE95C;
+__CSPRepostEvent = 0x002AFC9C;
+n_alSeqpPlay = 0x002AFDB0;
+n_alSeqpSetBank = 0x002AFDE0;
+n_alSeqpSetChlFXMix = 0x002AFE10;
+n_alSeqpSetSeq = 0x002AFE60;
+n_alSeqpSetVol = 0x002AFE90;
+n_alSeqpStop = 0x002AFEC0;
+alEvtqPostEvent = 0x002B0004;
+alEvtqFlush = 0x002B0110;
+alHeapInit = 0x002B02C0;
+__mapVoice = 0x002B144C;
+__vsDelta = 0x002B17B8;
+__setInstChanState = 0x002B19F0;
+alSeqSetLoc = 0x002B21EC;
+alSeqGetLoc = 0x002B2208;
+__alSeqNextDelta = 0x002B2224;
+read8 = 0x002B22E0;
+alUnlink = 0x002B2380;
+alLink = 0x002B23B0;
+alSndpPlay = 0x002B2CB0;
+alSndpSetFXMix = 0x002B2D10;
+alSndpSetPan = 0x002B2D60;
+alSndpSetPitch = 0x002B2DB0;
+alSndpSetSound = 0x002B2E30;
+alSndpSetVol = 0x002B2E40;
+alSndpStop = 0x002B2E90;
+alSynAddPlayer = 0x002B2EE0;
+alSynDelete = 0x002B3120;
+alSynFreeVoice = 0x002B3130;
+alSynSetPriority = 0x002B33A0;
+alSynStopVoice = 0x002B3620;
+__allocParam = 0x002B3B28;
+__freeParam = 0x002B3B54;
+_freePVoice = 0x002B3B6C;
+_collectPVoices = 0x002B3BAC;
+alAuxBusPull = 0x002B3D30;
+alAuxBusParam = 0x002B3E0C;
+alMainBusNew = 0x002B4384;
+alAuxBusNew = 0x002B43E0;
+alSaveNew = 0x002B44C8;
+_ldexpf = 0x002B52E4;
+alFilterNew = 0x002B5310;
+alMainBusPull = 0x002B5330;
+alMainBusParam = 0x002B5470;
+alResampleParam = 0x002B5660;
+alFxParam = 0x002B6008;
+alSavePull = 0x002B62B0;
+alSaveParam = 0x002B63B0;
