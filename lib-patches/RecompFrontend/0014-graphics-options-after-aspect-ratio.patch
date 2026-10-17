@@ -1,0 +1,39 @@
+diff --git a/recompui/include/recompui/config.h b/recompui/include/recompui/config.h
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -128,6 +128,8 @@
+         // Called by create_graphics_tab() right after the MS Anti-Aliasing
+         // option, to add a game's own options there. Set before it.
+         void set_graphics_options_after_msaa(std::function<void(recomp::config::Config &)> add);
++        // The same, right after the Aspect Ratio option.
++        void set_graphics_options_after_aspect_ratio(std::function<void(recomp::config::Config &)> add);
+         recomp::config::Config &create_graphics_tab(const std::string &name = config::graphics::tab_name);
+         recomp::config::Config &create_sound_tab(const std::string &name = config::sound::tab_name);
+         void create_mods_tab(const std::string &name = config::mods::tab_name);
+diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
+--- a/recompui/src/config/ui_config_tab_graphics.cpp
++++ b/recompui/src/config/ui_config_tab_graphics.cpp
+@@ -223,6 +223,12 @@
+             options_after_msaa = std::move(add);
+         }
+ 
++        static std::function<void(recomp::config::Config &)> options_after_aspect_ratio;
++
++        void set_graphics_options_after_aspect_ratio(std::function<void(recomp::config::Config &)> add) {
++            options_after_aspect_ratio = std::move(add);
++        }
++
+         recomp::config::Config &create_graphics_tab(const std::string &name) {
+             created_graphics_config = true;
+ 
+@@ -297,6 +303,10 @@
+                 ultramodern::renderer::AspectRatio::Original
+             );
+ 
++            if (options_after_aspect_ratio) {
++                options_after_aspect_ratio(config);
++            }
++
+             config.add_enum_option(
+                 graphics::options::wm_option,
+                 "Window Mode",

@@ -17,6 +17,7 @@
 // drift. So each menu is drawn exactly as in 4:3, and its background images
 // are drawn a second time, stretched, into the bars either side.
 #include <algorithm>
+#include <vector>
 #include <cstdlib>
 #include <atomic>
 #include <cmath>
@@ -955,6 +956,67 @@ static void clear_colour_buffer(uint8_t* rdram, uint32_t width, uint32_t height,
 // to black here, before anything else is drawn.
 extern "C" void trw_apply_extras(uint8_t* rdram);
 
+// Text drawn before a match frame's colour buffer is set: a trial's
+// objective ("PROVING GROUNDS", "acquire 2 frags", ...) during the level's
+// fly-through. The game draws it first, into whichever colour buffer the last
+// frame left set (on the N64 the finished frame, about to be shown), then
+// fills the new buffer and draws the level, which in RT64 leaves the text
+// nowhere to be seen. It's moved to the end of the frame instead: copied from
+// the display list here (from its scissor, so it keeps its own setup, up to
+// the frame's own setup: its next display list call or colour image) and
+// NOPed, then put back just before the frame's end (trw_frame_end).
+static std::vector<uint32_t> early_text;
+
+static void take_early_text(uint8_t* rdram, uint32_t base, uint32_t head) {
+    early_text.clear();
+    if (head <= base || head - base > 0x10000) {
+        return;
+    }
+    uint32_t from = 0;
+    uint32_t to = 0;
+    bool has_text = false;
+    for (uint32_t a = base; a < head && to == 0; a += 8) {
+        uint32_t op = (uint32_t)MEM_W(0, (gpr)(int32_t)a) >> 24;
+        if (from == 0) {
+            if (op == 0xED) { // G_SETSCISSOR
+                from = a;
+            }
+        }
+        else if (op == 0xE4) { // G_TEXRECT
+            has_text = true;
+        }
+        else if (op == 0xDE || op == 0xFF || op == 0xFE) { // G_DL, G_SETCIMG, G_SETZIMG
+            to = a;
+        }
+    }
+    if (!has_text || to == 0) {
+        return;
+    }
+    for (uint32_t a = from; a < to; a += 8) {
+        early_text.push_back((uint32_t)MEM_W(0, (gpr)(int32_t)a));
+        early_text.push_back((uint32_t)MEM_W(4, (gpr)(int32_t)a));
+        MEM_W(0, (gpr)(int32_t)a) = 0; // G_SPNOOP
+        MEM_W(4, (gpr)(int32_t)a) = 0;
+    }
+}
+
+// Before the game ends a match frame's display list (func_00288DF8).
+extern "C" void trw_frame_end(uint8_t* rdram) {
+    if (early_text.empty() || !head_valid(rdram)) {
+        early_text.clear();
+        return;
+    }
+    uint32_t head = (uint32_t)MEM_W(0, (gpr)(int32_t)kDlHead);
+    uint32_t base = head >= kDlBufferB ? kDlBufferB : kDlBufferA;
+    if (head + early_text.size() * 4 + 8 <= base + (kDlBufferB - kDlBufferA)) {
+        for (size_t i = 0; i < early_text.size(); i++) {
+            MEM_W(0, (gpr)(int32_t)(head + i * 4)) = (int32_t)early_text[i];
+        }
+        MEM_W(0, (gpr)(int32_t)kDlHead) = (int32_t)(head + early_text.size() * 4);
+    }
+    early_text.clear();
+}
+
 extern "C" void trw_frame_buffers_set(uint8_t* rdram) {
     trw_apply_extras(rdram); // src/game/extras.cpp
     if (!head_valid(rdram)) {
@@ -967,6 +1029,9 @@ extern "C" void trw_frame_buffers_set(uint8_t* rdram) {
     bool frame_start = base != last_clear_base || head <= last_clear_head;
     last_clear_base = base;
     last_clear_head = head;
+    if (frame_start && in_match(rdram)) {
+        take_early_text(rdram, base, head);
+    }
     if (frame_start) {
         // RT64's frame interpolation (the Display refresh rate) is off in the
         // front end: its frames made between two of the level select's,

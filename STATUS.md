@@ -5,6 +5,133 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-10-17, round 106: double click a slider for its default
+
+Requested: double clicking a slider in the settings puts it back to its
+default (still applied with Apply, like any change). RecompFrontend patch
+0015: the slider watches left presses on any of its parts (bar, handle, the
+number), and two within 0.5 s and 6 px of each other call its double-click
+callback; the number options set their default through the same path as a
+drag. RmlUi's own dblclick wasn't usable: it needs both clicks on the same
+element, and the first click moves the handle under the cursor, so the
+second lands on the handle.
+Checked (Rumble Strength, default 25%): 92%, double click on the bar: 25%;
+92%, double click on the number: 25%.
+
+## 2026-10-17, round 105: osClockRate
+
+Checked after the same bug turned up in another N64Recomp port: N64Recomp
+skips the game's osInitialize, and the runtime's never sets the game's
+osClockRate. Here osInitialize doesn't load it from data, it writes it
+(62,500,000, then x 3/4) to 0x80147B00, so it stayed 0, not 62.5 MHz. One
+game function reads it: func_00414430, osGetTime in seconds (a double).
+Through func_002A180C, times 1000, it is the menu system's millisecond
+clock: the timer event 0xE08 (func_00297974, with the step since the last
+one) and 0xE0A (func_00298F28), and front-end code at 0x0041xxxx. Divided by
+0, every timestamp was the same and every step 0. Gameplay timing doesn't
+use it (the frame step reads osGetTime with its own constant, round 3).
+A hook after the game's osInitialize call (0x002A7444 in trw_boot_main) sets
+46,875,000, the rate the runtime's osGetTime counts at.
+Checked: the menu clock reads 54559 then 59047 ms about 4.5 s apart; menus
+and a match as before.
+
+## 2026-10-17, round 104: Rapid Fire and the level pickups
+
+Reported: with Rapid Fire (and Semi-Auto) on, clicking fast fired the
+Cerebral Bore pickup again and again. The weapons picked up in a level
+(0x12-0x15: Cerebral Bore, PFM Mine, Iron Claw, Sentry Turret) go after one
+use, and cutting the fire state short let them fire again first. Rapid Fire
+now leaves the held weapon (player +0x62E) alone when it's one of them.
+Checked: the held weapon reads 3 (Mag 60) in a match and Rapid Fire on it is
+unchanged; the pickups weren't reachable in the sandbox. On Windows, the
+Cerebral Bore with Rapid Fire and Semi-Auto now fires once.
+
+## 2026-10-17, round 103: Field of View (issue #2)
+
+Requested: a field of view slider. The match camera (func_00234FCC) makes
+its perspective with guPerspectiveF (0x002B6ECC, at 0x0023567C) from a
+vertical angle in a2: 74.4 degrees, which is 90 across a 4:3 picture, and
+less when zoomed. Graphics tab, Field of View, right under Aspect Ratio
+(RecompFrontend patch 0014 adds the hook for options there): 60 to 120,
+degrees across 4:3, 90 the game's own. It scales the game's angle in
+tangents, so zoom still works; widescreen adds to the sides as before. The
+other guPerspectiveF call (0x0023590C, a fixed 47.5) is left alone.
+Checked at 60, 90 and 120: the view widens and narrows, the weapon and HUD
+stay where they were.
+
+## 2026-10-17, round 102: Rapid Fire's Semi-Auto (issue #5)
+
+Requested: a Rapid Fire that fires as fast as you can press, not while
+held, so ammo lasts. The fire state (player +0x3F0 and +0x3F2, the
+GameShark code's halfwords) is 0 before the first shot, 5 while a shot is
+busy and 2 when the weapon can fire again. Semi-Auto (Cheats tab, under
+Rapid Fire, greyed out with it off) sets it to 2 only for a new press of Z
+made while the weapon is busy.
+Rapid Fire itself had two problems, found on the starting burst weapon: set
+to 2 from 0 the weapon never fired, and set to 2 in the first calls of a
+shot, the shot restarted before its round went out, so holding Z fired
+nothing until it was let go. It now waits for the shot to be out (the
+ammo has gone down, or 6 calls for weapons without ammo and Unlimited Ammo)
+and never writes from 0.
+Checked (hold 3 s, then 8 quick taps, rounds used): off 6 / 6; Rapid Fire
+10 / 11; Semi-Auto 6 / 9.
+
+## 2026-10-16, round 101: Custom Music through the pause menu (issue #3)
+
+Reported: with Custom Music on, the music often went silent when paused.
+The pause menu ducks the game's music to silence (func_0025DAD4 sets the
+music object's +0x38 and the volume steps down to 0; func_0025DAE4 on
+unpause puts it straight back), and the file followed the game's volumes
+except while the match read as paused. The duck starts a frame before that,
+so the first ducked volume got through and the file sat at it for the whole
+pause, and after the first pause that volume was 0. Volumes set while the
+duck is on are now left out entirely, so the file plays on at its level
+through the pause menu and its options. The game's own music is unchanged
+(it fades out on pause, as on the N64).
+Checked: six pauses and the options page in a match, the file stayed at
+full level every time.
+
+## 2026-10-16, round 100: player assignment kept across launches (issue #6)
+
+Reported: with Local Multiplayer on, the players had to be assigned again
+on every launch. RecompFrontend keeps the assignment only in memory. Patch
+0013 adds `playerassignment::describe()` ("keyboard" or "pad:<GUID>:<n>"
+per player), `restore()` and a commit callback; the per-player profile
+setup moved into one function both paths use. The game saves the list in
+general.json ("player_assignment", hidden) on Confirm and restores it from
+the launcher once, when Local Multiplayer is on and nothing is assigned yet.
+If a saved controller isn't connected yet, nothing is assigned; the
+launcher tries again each frame until it is.
+Checked: assigned the keyboard, confirmed, relaunched: player 1 was the
+keyboard. With nothing saved, player 1 stayed empty.
+
+## 2026-10-16, round 99: no weapon wheel on quick picks (issue #4)
+
+Reported: the mouse wheel flashed the weapon wheel on screen. Q, the mouse
+wheel and 1-8 pick by opening the game's wheel for a moment (round 38), so
+it was drawn for those frames. The HUD's call to the wheel's drawing
+(func_002183E8, at 0x0021EFBC) is now skipped for the player a pick is
+running for, until the wheel has closed (trw_wheel_hidden; the generated
+label after_11 is right after the call). Holding E shows it as before.
+Checked: scrolling switched the weapon with no wheel in any frame; E showed
+the wheel.
+
+## 2026-10-16, round 98: trial objective text (issue #8)
+
+Reported: the objective a trial shows at its start ("PROVING GROUNDS /
+acquire 2 frags / with 2 lives") was missing. The game draws it through its
+text routine (func_002A8820) every frame of the fly-through, but at the very
+start of the frame's display list, before func_00291B00 sets the frame's
+colour image: on the N64 it lands on the colour buffer the last frame left
+set, the finished frame about to be shown, and the new buffer is then filled
+and the level drawn. In RT64 nothing of it showed. In a match, the text
+block (from its scissor up to the frame's own setup: the next G_DL, colour
+or depth image) is now copied out and NOPed at frame start
+(trw_frame_buffers_set) and put back just before the frame's G_ENDDL
+(func_00288DF8, hook at 0x00288F38). Found with gdb (the strings and their
+draw calls; func_00288888 and func_0024EB70 end other display lists).
+Checked (widescreen): the three lines show centred through the fly-through.
+
 ## 2026-10-16, round 97: clean-up for the public release
 
 - Removed: the TRW_AUTOSTART and TRW_NO_AUDIO_CAP testing switches, the F8

@@ -123,3 +123,15 @@ extern "C" void osUnmapTLB_recomp(uint8_t*, recomp_context*) {
 extern "C" void osGetCurrFaultedThread_recomp(uint8_t*, recomp_context* ctx) {
     ctx->r2 = 0;
 }
+
+// --- osClockRate -------------------------------------------------------------
+// libultra's osInitialize sets osClockRate (u64, 0x80147B00 in this game) to
+// 62.5 MHz x 3/4 = 46.875 MHz, the rate osGetTime counts at (the runtime's
+// counts at the same rate, ultramodern/src/timer.cpp). The game's
+// osInitialize is skipped, so the value is set after its call
+// (turokrw.us.toml).
+extern "C" void trw_set_clock_rate(uint8_t* rdram) {
+    constexpr uint64_t clock_rate = 62'500'000ull * 3 / 4;
+    MEM_W(0, (gpr)(int32_t)0x80147B00) = (int32_t)(clock_rate >> 32);
+    MEM_W(4, (gpr)(int32_t)0x80147B00) = (int32_t)(uint32_t)clock_rate;
+}

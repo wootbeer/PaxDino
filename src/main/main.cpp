@@ -86,7 +86,7 @@ namespace trw {
 
 static const std::string program_name = "PaxDino: Rage Wars Recomp";
 static const std::u8string program_id = u8"trwrecomp";
-static const std::string version_string = "0.1.0";
+static const std::string version_string = "0.1.1";
 
 template <typename... Ts>
 [[noreturn]] static void exit_error(const char* fmt, Ts... args) {
@@ -537,6 +537,12 @@ namespace {
 
     void launcher_update(recompui::LauncherMenu*) {
         trw::launcher_art::update();
+        // Local Multiplayer: last launch's players, once their controllers
+        // are connected.
+        static bool players_restored = false;
+        if (!players_restored && trw::config::get_local_multiplayer()) {
+            players_restored = trw::config::restore_player_assignment();
+        }
         if (steam_job == SteamJob::Done) {
             trw::steam::Result result;
             {
@@ -610,6 +616,7 @@ int main(int argc, char** argv) {
     recompui::config::GeneralTabOptions general_tab_options{};
     general_tab_options.has_mouse_sensitivity = true;
     trw::config::add_general_options(recompui::config::create_general_tab(general_tab_options));
+    recompui::config::set_graphics_options_after_aspect_ratio(trw::config::add_graphics_options_after_aspect_ratio);
     recompui::config::set_graphics_options_after_msaa(trw::config::add_graphics_options_after_msaa);
     trw::config::add_graphics_options(recompui::config::create_graphics_tab());
     recompui::config::create_controls_tab();
@@ -626,6 +633,7 @@ int main(int argc, char** argv) {
     // changed in the menu.
     if (trw::config::get_local_multiplayer()) {
         recompinput::players::set_single_player_mode(false);
+        recompinput::playerassignment::set_commit_callback(trw::config::save_player_assignment);
     }
 
     recomp::rsp::callbacks_t rsp_callbacks{

@@ -1,0 +1,97 @@
+diff --git a/recompui/src/config/ui_config_option.cpp b/recompui/src/config/ui_config_option.cpp
+--- a/recompui/src/config/ui_config_option.cpp
++++ b/recompui/src/config/ui_config_option.cpp
+@@ -214,6 +214,13 @@
+             this->on_hover(this->option_id);
+         }
+     });
++    // A double click puts the option back to its default (applied like any
++    // other change).
++    slider->set_double_click_callback([this]() {
++        auto &num_opt = this->config->get_option_config<recomp::config::ConfigOptionNumber>(this->option_index);
++        this->set_option_value(this->option_id, num_opt.default_value);
++        this->update_value();
++    });
+     update_value();
+     update_disabled();
+ };
+diff --git a/recompui/src/elements/ui_slider.cpp b/recompui/src/elements/ui_slider.cpp
+--- a/recompui/src/elements/ui_slider.cpp
++++ b/recompui/src/elements/ui_slider.cpp
+@@ -2,6 +2,7 @@
+ #include "ui_slider.h"
+ #include "ui_utils.h"
+ 
++#include <chrono>
+ #include <cmath>
+ #include <charconv>
+ 
+@@ -111,6 +112,27 @@
+                 }
+             }
+             break;
++        case EventType::MouseButton:
++            {
++                // A double click, found here: RmlUi's own needs both clicks
++                // on the same element, and the first moves the handle under
++                // the cursor. Presses on the parts reach the slider after
++                // their own handling, so this comes after the value change.
++                const EventMouseButton &mousebutton = std::get<EventMouseButton>(e.variant);
++                if (mousebutton.button != MouseButton::Left || !mousebutton.pressed || !is_enabled()) {
++                    break;
++                }
++                double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
++                bool double_click = last_press_time >= 0.0 && now - last_press_time < 0.5 &&
++                    std::fabs(mousebutton.x - last_press_x) < 6.0f && std::fabs(mousebutton.y - last_press_y) < 6.0f;
++                last_press_time = double_click ? -1.0 : now;
++                last_press_x = mousebutton.x;
++                last_press_y = mousebutton.y;
++                if (double_click && double_click_callback != nullptr) {
++                    double_click_callback();
++                }
++            }
++            break;
+         case EventType::Enable:
+             {
+                 bool enable_active = std::get<EventEnable>(e.variant).active;
+@@ -133,7 +155,7 @@
+         }
+     }
+ 
+-    Slider::Slider(ResourceId rid, Element *parent, SliderType type) : Element(rid, parent, Events(EventType::Focus, EventType::Update, EventType::Navigate, EventType::Enable)) {
++    Slider::Slider(ResourceId rid, Element *parent, SliderType type) : Element(rid, parent, Events(EventType::Focus, EventType::Update, EventType::Navigate, EventType::Enable, EventType::MouseButton)) {
+         this->type = type;
+ 
+         set_cursor(Cursor::Pointer);
+@@ -249,4 +271,8 @@
+         }
+     }
+ 
++    void Slider::set_double_click_callback(std::function<void()> callback) {
++        double_click_callback = callback;
++    }
++
+ } // namespace recompui
+diff --git a/recompui/src/elements/ui_slider.h b/recompui/src/elements/ui_slider.h
+--- a/recompui/src/elements/ui_slider.h
++++ b/recompui/src/elements/ui_slider.h
+@@ -25,6 +25,10 @@
+         int precision = 0;
+         std::vector<std::function<void(double)>> value_changed_callbacks;
+         std::function<void(bool)> focus_callback = nullptr;
++        std::function<void()> double_click_callback = nullptr;
++        double last_press_time = -1.0;
++        float last_press_x = 0.0f;
++        float last_press_y = 0.0f;
+ 
+         void set_value_internal(double v, bool setup, bool trigger_callbacks);
+         void bar_pressed(float x, float y);
+@@ -56,6 +60,8 @@
+         void add_value_changed_callback(std::function<void(double)> callback);
+         void do_step(bool increment);
+         void set_focus_callback(std::function<void(bool)> callback);
++        // Called on a double click anywhere on the slider (its value too).
++        void set_double_click_callback(std::function<void()> callback);
+     };
+ 
+ } // namespace recompui

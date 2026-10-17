@@ -21,6 +21,10 @@ namespace trw::config {
 
     Accessory get_accessory(int port);
     bool get_local_multiplayer();
+    // Local Multiplayer's players, kept across launches (src/main/game_config.cpp).
+    void save_player_assignment();
+    // True once restored (or there's nothing to restore).
+    bool restore_player_assignment();
     bool get_invert_mouse_y();
     // Mouse in Menus (General): the cursor in the game's menus
     // (include/trw_menu_cursor.h).
@@ -53,6 +57,7 @@ namespace trw::config {
         KeepSong = 13,
         RandomizeMusic = 14,
         IdleDemo = 15,
+        SemiAuto = 16,
     };
     bool get_option(Option option);
 
@@ -63,6 +68,13 @@ namespace trw::config {
     // recompui::config::set_graphics_options_after_msaa() before
     // create_graphics_tab().
     void add_graphics_options_after_msaa(recomp::config::Config& graphics);
+    // Field of View, under Aspect Ratio: pass to
+    // recompui::config::set_graphics_options_after_aspect_ratio() before
+    // create_graphics_tab().
+    void add_graphics_options_after_aspect_ratio(recomp::config::Config& graphics);
+    // Graphics tab: the field of view in matches, in degrees across a 4:3
+    // picture; 90 is the game's own.
+    float get_field_of_view();
 
     // Graphics tab: the filter over the final picture (RT64::ScreenFilter,
     // lib-patches/rt64/0005).

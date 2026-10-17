@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.1 Beta] - 2026-10-17
+
+### Added
+- Field of View slider in Graphics
+- Double click a slider in the settings to put it back to its default
+- Rapid Fire: Semi-Auto. Fires as fast as you press, holding fires at the
+  normal rate
+
+### Fixed
+- The objective text at the start of a trial was missing
+- The weapon wheel flashed on screen when picking a weapon with the mouse
+  wheel, Q / E or the number keys
+- Local Multiplayer forgot which controller or keyboard each player had on
+  every launch
+- Custom Music went silent in the pause menu. It now plays on through it
+- Rapid Fire didn't fire some weapons while held
+- Rapid Fire let the Cerebral Bore, PFM Mine, Iron Claw and Sentry Turret
+  pickups be used over and over
+
 ## [0.1.0 Beta] - 2026-10-16
 
 First public beta. Compared to the original N64 game:

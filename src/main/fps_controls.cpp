@@ -498,6 +498,9 @@ namespace {
     // usable slot, and 1-8 pick a slot, by opening the wheel for a moment,
     // pointing at the slot, and letting go.
     float wheel_cursor_x = 0.0f, wheel_cursor_y = 0.0f;
+    // The player whose wheel is open for such a pick: not drawn then
+    // (trw_wheel_hidden), until the wheel has closed again.
+    std::atomic<uint32_t> picking_player{ 0 };
     struct WeaponPick {
         int phase = 0;  // 0 idle, 1 opening the wheel, 2 pointing, 3 letting go
         int reads = 0;  // controller reads in this phase
@@ -1221,6 +1224,12 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
         pick = WeaponPick{};
     }
     if (pick.phase != 0) {
+        picking_player.store(player);
+    }
+    else if (!wheel_open) {
+        picking_player.store(0);
+    }
+    if (pick.phase != 0) {
         pick.reads++;
         if (pick.phase == 1) {
             // Open the wheel (stick centred) until it has filled its slots.
@@ -1325,6 +1334,12 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
     // Right click: the weapon's second function (B), as R.
     if (mb & SDL_BUTTON_RMASK) *buttons |= BTN_B;
     return ret;
+}
+
+// Before the HUD draws the weapon wheel (turokrw.us.toml): 1 to skip it while
+// it's only open for a pick by Q, the mouse wheel or the number keys.
+extern "C" int trw_wheel_hidden(uint8_t*, uint32_t player) {
+    return player != 0 && player == picking_player.load() ? 1 : 0;
 }
 
 // The game's look code eases each player's pitch toward the angle its look

@@ -10,8 +10,8 @@
 // 0x80107DE4; its player at +0x14). Hooks in turokrw.us.toml tell this file
 // when a song starts (trw_music_song), when the game sets the player's volume
 // (trw_music_seqp_vol, which then gives the game 0 so its song is silent; the
-// volumes it asks for, which carry its fades and pause ducking, scale the
-// file instead) and when it stops it (trw_music_seqp_stop). The file is mixed
+// volumes it asks for, which carry its fades, scale the file instead; the
+// pause menu's duck is left out) and when it stops it (trw_music_seqp_stop). The file is mixed
 // into the game's audio output (trw::music::mix, from src/main/main.cpp).
 #include "trw_music.h"
 
@@ -450,15 +450,25 @@ extern "C" void trw_music_song(uint8_t*, uint32_t song, uint32_t seqp) {
     start_loading_locked();
 }
 
+static constexpr uint32_t kMusicDucked = 0x80107E1C; // the music object (0x80107DE4) + 0x38
+
 // n_alSeqpSetVol(seqp, vol): the volume to give the player (0 while a file
 // replaces its song).
-extern "C" int32_t trw_music_seqp_vol(uint8_t*, uint32_t seqp, int32_t vol) {
+extern "C" int32_t trw_music_seqp_vol(uint8_t* rdram, uint32_t seqp, int32_t vol) {
     if (!option_enabled.load()) {
         return vol;
     }
     std::lock_guard lock{ mutex };
     if (!active || seqp != music_seqp) {
         return vol;
+    }
+    // The pause menu ducks the music (the music object's +0x38, set by
+    // func_0025DAD4 and cleared by func_0025DAE4), down to silence. The duck
+    // starts a frame before the game reads as paused, so its volumes are
+    // left out here: the file plays on at its level through the pause.
+    bool ducked = *reinterpret_cast<const uint32_t*>(rdram + (kMusicDucked - 0x80000000u)) != 0;
+    if (ducked) {
+        return 0;
     }
     if (start_volume <= 0) {
         start_volume = std::max(vol, 1);

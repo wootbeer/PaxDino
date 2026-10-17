@@ -1,0 +1,146 @@
+diff --git a/recompinput/include/recompinput/players.h b/recompinput/include/recompinput/players.h
+--- a/recompinput/include/recompinput/players.h
++++ b/recompinput/include/recompinput/players.h
+@@ -1,6 +1,9 @@
+ #ifndef __RECOMP_INPUT_PLAYER_ASSIGNMENT_H__
+ #define __RECOMP_INPUT_PLAYER_ASSIGNMENT_H__
+ 
++#include <functional>
++#include <string>
++#include <vector>
+ #include "recompinput.h"
+ 
+ namespace recompinput {
+@@ -42,6 +45,16 @@
+         std::chrono::steady_clock::duration get_player_time_since_last_button_press(int player_index);
+ 
+         void process_sdl_event(SDL_Event* event);
++
++        // The assigned players as text, one entry each: "keyboard", or a
++        // controller as "pad:<GUID>:<n>" (the n-th connected controller with
++        // that GUID), to save and restore() at the next launch.
++        std::vector<std::string> describe();
++        // Assigns the players a describe() gave, if every controller in it
++        // is connected; false (nothing changed) otherwise.
++        bool restore(const std::vector<std::string>& players);
++        // Called after the players are assigned through the menu.
++        void set_commit_callback(std::function<void()> callback);
+     }
+ }
+ 
+diff --git a/recompinput/src/players.cpp b/recompinput/src/players.cpp
+--- a/recompinput/src/players.cpp
++++ b/recompinput/src/players.cpp
+@@ -1,3 +1,7 @@
++#include <cstdlib>
++#include <functional>
++#include <string>
++#include <vector>
+ #include "recompinput/recompinput.h"
+ #include "recompinput/players.h"
+ #include "recompinput/profiles.h"
+@@ -149,10 +153,104 @@
+     PlayerState.queue_close_player_assignment_modal = true;
+ }
+ 
++static std::function<void()> commit_callback;
++
++static void use_assigned_players();
++
+ void playerassignment::commit_player_assignment() {
+     stop_and_close_modal();
+ 
+     PlayerState.players = PlayerState.temp_players;
++    use_assigned_players();
++    if (commit_callback) {
++        commit_callback();
++    }
++}
++
++void playerassignment::set_commit_callback(std::function<void()> callback) {
++    commit_callback = std::move(callback);
++}
++
++// The connected controllers, in SDL's device order.
++static std::vector<SDL_GameController*> connected_controllers() {
++    std::vector<SDL_GameController*> controllers;
++    for (int i = 0; i < SDL_NumJoysticks(); i++) {
++        if (!SDL_IsGameController(i)) {
++            continue;
++        }
++        SDL_GameController* controller = SDL_GameControllerFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
++        if (controller != nullptr) {
++            controllers.push_back(controller);
++        }
++    }
++    return controllers;
++}
++
++static std::string controller_guid(SDL_GameController* controller) {
++    char text[64] = {};
++    SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(SDL_GameControllerGetJoystick(controller)), text, sizeof(text));
++    return text;
++}
++
++std::vector<std::string> playerassignment::describe() {
++    std::vector<std::string> out;
++    std::vector<SDL_GameController*> controllers = connected_controllers();
++    for (size_t i = 0; i < PlayerState.players.get_count(); i++) {
++        const Player& player = PlayerState.players[i];
++        if (player.controller == nullptr) {
++            out.push_back("keyboard");
++            continue;
++        }
++        std::string guid = controller_guid(player.controller);
++        int n = 0;
++        for (SDL_GameController* controller : controllers) {
++            if (controller == player.controller) {
++                break;
++            }
++            if (controller_guid(controller) == guid) {
++                n++;
++            }
++        }
++        out.push_back("pad:" + guid + ":" + std::to_string(n));
++    }
++    return out;
++}
++
++bool playerassignment::restore(const std::vector<std::string>& players) {
++    if (players.empty() || players.size() > PlayerState.max_players) {
++        return false;
++    }
++    std::vector<SDL_GameController*> controllers = connected_controllers();
++    PlayerArray restored{};
++    for (const std::string& entry : players) {
++        if (entry == "keyboard") {
++            restored.add_keyboard_player();
++            continue;
++        }
++        size_t colon = entry.rfind(':');
++        if (entry.rfind("pad:", 0) != 0 || colon <= 4) {
++            return false;
++        }
++        std::string guid = entry.substr(4, colon - 4);
++        int n = std::atoi(entry.c_str() + colon + 1);
++        SDL_GameController* found = nullptr;
++        for (SDL_GameController* controller : controllers) {
++            if (controller_guid(controller) == guid && n-- == 0) {
++                found = controller;
++                break;
++            }
++        }
++        if (found == nullptr) {
++            return false;
++        }
++        restored.add_controller_player(found);
++    }
++    PlayerState.players = restored;
++    use_assigned_players();
++    return true;
++}
++
++static void use_assigned_players() {
+     // The keyboard is read the same for every player, so a player with a
+     // controller has no keyboard profile (-1). Left as it was, its keyboard
+     // profile stayed the single-player one (index 0, where they all start),

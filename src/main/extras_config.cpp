@@ -59,6 +59,7 @@ namespace {
     };
 
     const std::string bloom_id = "bloom";
+    const std::string field_of_view_id = "field_of_view";
     const std::vector<recomp::config::ConfigOptionEnumOption> bloom_options = {
         {trw::config::Bloom::Off, "Off", "Off"},
         {trw::config::Bloom::Low, "Low", "Low"},
@@ -88,6 +89,7 @@ namespace {
         { &sound_id, "custom_music_keep_song" },
         { &sound_id, "randomize_game_music" },
         { &enhancements_id, "idle_demo" },
+        { &cheats_id, "rapid_fire_semi_auto" },
     };
 }
 
@@ -101,6 +103,16 @@ void trw::config::add_graphics_options_after_msaa(recomp::config::Config& graphi
         "",
         bloom_options,
         trw::config::Bloom::Low
+    );
+}
+
+void trw::config::add_graphics_options_after_aspect_ratio(recomp::config::Config& graphics) {
+    graphics.add_number_option(
+        field_of_view_id,
+        "Field of View",
+        "How wide the view is in a match, in degrees across a 4:3 picture (wider screens show more at the sides). "
+        "<b>90</b> is the game's own.",
+        60, 120, 1, 0, false, 90
     );
 }
 
@@ -351,6 +363,16 @@ void trw::config::add_extra_tabs() {
     );
 
     cheats.add_bool_option(
+        "rapid_fire_semi_auto",
+        "Semi-Auto",
+        "Rapid Fire only on each new press of <b>Z</b>: the weapon fires as fast as you can press it. "
+        "Holding <b>Z</b> fires at the normal rate, so ammo lasts longer.",
+        false
+    );
+    std::vector<recomp::config::ConfigValueVariant> rapid_fire_off = { false };
+    cheats.add_option_disable_dependency("rapid_fire_semi_auto", "rapid_fire", rapid_fire_off);
+
+    cheats.add_bool_option(
         "infinite_time",
         "Infinite Time",
         "The match clock stops counting down, so timed matches only end on their frag or score limit.",
@@ -391,6 +413,13 @@ trw::config::Bloom trw::config::get_bloom() {
         return Bloom::Off;
     }
     return static_cast<Bloom>(std::get<uint32_t>(recompui::config::get_graphics_config().get_option_value(bloom_id)));
+}
+
+float trw::config::get_field_of_view() {
+    if (!graphics_options_added) {
+        return 90.0f;
+    }
+    return static_cast<float>(std::get<double>(recompui::config::get_graphics_config().get_option_value(field_of_view_id)));
 }
 
 bool trw::config::get_weapon_reverb() {

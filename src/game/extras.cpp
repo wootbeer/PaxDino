@@ -1,6 +1,8 @@
 // Unlocks and cheats from the menu's Enhancements, Unlocks and Cheats
 // tabs (src/main/extras_config.cpp) that are applied to the game's memory once
 // a frame, rather than through a hook in the recompiled code.
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -66,10 +68,13 @@ namespace {
     constexpr uint32_t kPlayerPort = 0x5D4;
     constexpr uint32_t kPlayerHealth = 0x5E6;     // halfword, 0x6400 is 100
     constexpr uint32_t kPlayerJumpSpeed = 0x20;   // float, up
-    constexpr uint32_t kPlayerFireDelay = 0x3F0;  // two halfwords
+    constexpr uint32_t kPlayerFireDelay = 0x3F0;  // two halfwords: 0 before the first shot, 5 while firing, 2 ready
     constexpr uint16_t kFullHealth = 0x6400;
     constexpr uint32_t kMoonJumpSpeed = 0x43980000; // 304.0f
-    constexpr uint16_t kRapidFireDelay = 2;
+    constexpr uint16_t kRapidFireDelay = 2;       // ready to fire
+    constexpr uint32_t kPlayerHeldWeapon = 0x62E; // halfword, a weapon id
+    constexpr uint16_t kFirstPickupWeapon = 0x12; // Cerebral Bore
+    constexpr uint16_t kLastPickupWeapon = 0x15;  // Sentry Turret
     constexpr uint16_t kButtonL = 0x0020;
     constexpr uint16_t kButtonZ = 0x2000;
 
@@ -128,12 +133,68 @@ namespace {
         }
     }
 
+    // Rapid Fire. A shot puts the fire state at 5 (busy) until the weapon
+    // can fire again, then 2 (ready). Rapid Fire sets it to 2 once the shot
+    // is out: its ammo has gone down, or a few calls on for a weapon that
+    // uses none (or with Unlimited Ammo). Any sooner and the shot never gets
+    // out. Never from 0 (before the first shot): the weapon then doesn't fire
+    // at all. With Semi-Auto, only for a new press of Z, so holding it fires
+    // at the weapon's own rate.
+    constexpr int kShotOutCalls = 6;
+    int busy_calls[4] = {};
+    int busy_ammo[4] = {};
+    uint16_t prev_buttons[4] = {};
+    bool press_waiting[4] = {};
+
+    int player_ammo(uint8_t* rdram, gpr p) {
+        return MEM_BU(0x5F5, p) + MEM_BU(0x5F7, p) + MEM_BU(0x5F9, p); // bullet, energy, explosive
+    }
+
+    void apply_rapid_fire(uint8_t* rdram, gpr p, int port, uint16_t buttons, bool semi_auto) {
+        uint16_t state = MEM_HU(kPlayerFireDelay, p);
+        bool busy = state != 0 && state != kRapidFireDelay;
+        // The weapons picked up in a level (Cerebral Bore, PFM Mine, Iron
+        // Claw, Sentry Turret) go after one use; cut short, they could be
+        // used again and again.
+        uint16_t weapon = MEM_HU(kPlayerHeldWeapon, p);
+        if (weapon >= kFirstPickupWeapon && weapon <= kLastPickupWeapon) {
+            busy = false;
+        }
+        bool held = (buttons & kButtonZ) != 0;
+        if (held && !(prev_buttons[port] & kButtonZ)) {
+            // A press while the weapon is ready fires as it is.
+            press_waiting[port] = busy;
+        }
+        if (!held) {
+            press_waiting[port] = false;
+        }
+        prev_buttons[port] = buttons;
+
+        if (!busy) {
+            busy_calls[port] = 0;
+            return;
+        }
+        int ammo = player_ammo(rdram, p);
+        if (busy_calls[port]++ == 0) {
+            busy_ammo[port] = ammo;
+        }
+        bool shot_out = ammo < busy_ammo[port] || busy_calls[port] > kShotOutCalls;
+        if (!held || !shot_out || (semi_auto && !press_waiting[port])) {
+            return;
+        }
+        press_waiting[port] = false;
+        busy_calls[port] = 0;
+        MEM_H(kPlayerFireDelay, p) = (int16_t)kRapidFireDelay;
+        MEM_H(kPlayerFireDelay + 2, p) = (int16_t)kRapidFireDelay;
+    }
+
     // The cheats that change the players, for each player on a controller
     // port (the bots have none).
     void apply_player_cheats(uint8_t* rdram) {
         bool health = trw::config::get_option(trw::config::Option::InfiniteHealth);
         bool moon_jump = trw::config::get_option(trw::config::Option::MoonJump);
         bool rapid_fire = trw::config::get_option(trw::config::Option::RapidFire);
+        bool semi_auto = trw::config::get_option(trw::config::Option::SemiAuto);
         if (!health && !moon_jump && !rapid_fire) {
             return;
         }
@@ -151,9 +212,8 @@ namespace {
                 if (moon_jump && (buttons & kButtonL)) {
                     MEM_W(kPlayerJumpSpeed, p) = (int32_t)kMoonJumpSpeed;
                 }
-                if (rapid_fire && (buttons & kButtonZ)) {
-                    MEM_H(kPlayerFireDelay, p) = (int16_t)kRapidFireDelay;
-                    MEM_H(kPlayerFireDelay + 2, p) = (int16_t)kRapidFireDelay;
+                if (rapid_fire) {
+                    apply_rapid_fire(rdram, p, port, buttons, semi_auto);
                 }
             }
         }
@@ -305,6 +365,24 @@ extern "C" void trw_apply_extras(uint8_t* rdram) {
 // Before a menu image is drawn (func_0040DB84). The panels' scanlines are a
 // stack of 8-pixel strips of one image (number 0xBB, at the image widget's
 // +0x2C) drawn over them.
+// Field of View (Graphics tab). The camera (func_00234FCC) makes its
+// perspective with guPerspectiveF (0x002B6ECC) from a vertical angle, 74.4
+// degrees normally (90 across at 4:3) and narrower when zoomed. The setting,
+// across a 4:3 picture, scales it in tangents, so zooming keeps working.
+extern "C" uint32_t trw_field_of_view(uint8_t*, uint32_t fovy_bits) {
+    float setting = trw::config::get_field_of_view();
+    if (setting == 90.0f) {
+        return fovy_bits;
+    }
+    constexpr float deg = 3.14159265f / 180.0f;
+    float fovy;
+    std::memcpy(&fovy, &fovy_bits, sizeof(fovy));
+    float scale = std::tan(setting * 0.5f * deg); // tan(45 degrees) is 1
+    fovy = 2.0f * std::atan(std::tan(fovy * 0.5f * deg) * scale) / deg;
+    std::memcpy(&fovy_bits, &fovy, sizeof(fovy));
+    return fovy_bits;
+}
+
 extern "C" int trw_menu_image_hidden(uint8_t* rdram, gpr widget) {
     constexpr uint32_t kScanlineImage = 0xBB;
     if (!trw::config::get_option(trw::config::Option::NoMenuScanlines)) {

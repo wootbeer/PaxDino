@@ -2,6 +2,9 @@
 // and local multiplayer. See include/trw_config.h.
 #include "trw_config.h"
 
+#include <string>
+#include <vector>
+
 #include "recompinput/players.h"
 #include "recompui/config.h"
 #include "recompui/recompui.h"
@@ -15,6 +18,7 @@ namespace {
     const std::string invert_mouse_y_id = "invert_mouse_y";
     const std::string menu_cursor_id = "menu_cursor";
     const std::string look_spring_override_id = "look_spring_override";
+    const std::string player_assignment_id = "player_assignment";
 
     const std::vector<recomp::config::ConfigOptionEnumOption> accessory_options = {
         {Accessory::ControllerPak, "ControllerPak", "Controller Pak"},
@@ -105,6 +109,10 @@ void trw::config::add_general_options(recomp::config::Config& general) {
         general.add_option_hidden_dependency(look_spring_override_id + "_p" + std::to_string(port + 1), local_multiplayer_id, false);
     }
 
+    // The players last assigned with Local Multiplayer on, restored at the
+    // next launch (trw::config::restore_player_assignment).
+    general.add_string_option(player_assignment_id, "Player Assignment", "", "", true);
+
     // The launcher's Preset entry (src/main/presets.cpp): the one picked last.
     general.add_enum_option(
         "preset",
@@ -162,6 +170,42 @@ trw::config::Accessory trw::config::get_accessory(int port) {
     }
     const std::string& id = port == 0 ? p1_accessory_id : other_accessory_id;
     return static_cast<Accessory>(std::get<uint32_t>(recompui::config::get_general_config().get_option_value(id)));
+}
+
+// Local Multiplayer's player assignment, kept across launches: saved when
+// players are assigned in the menu, and put back while the launcher is up
+// once every saved controller is connected (until then, or if the player
+// assigns them again, nothing is changed).
+void trw::config::save_player_assignment() {
+    std::string text;
+    for (const std::string& entry : recompinput::playerassignment::describe()) {
+        text += (text.empty() ? "" : ";") + entry;
+    }
+    recomp::config::Config& general = recompui::config::get_general_config();
+    general.update_option_value(player_assignment_id, text);
+    general.save_config();
+}
+
+bool trw::config::restore_player_assignment() {
+    if (!options_added || recompinput::players::get_number_of_assigned_players() > 0 ||
+        recompinput::playerassignment::is_active()) {
+        return true;
+    }
+    std::string text = std::get<std::string>(recompui::config::get_general_config().get_option_value(player_assignment_id));
+    if (text.empty()) {
+        return true;
+    }
+    std::vector<std::string> entries;
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t end = text.find(';', start);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        entries.push_back(text.substr(start, end - start));
+        start = end + 1;
+    }
+    return recompinput::playerassignment::restore(entries);
 }
 
 bool trw::config::get_local_multiplayer() {

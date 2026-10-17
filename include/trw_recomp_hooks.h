@@ -21,8 +21,10 @@ void trw_border_end(uint8_t* rdram);
 void trw_hud_begin(uint8_t* rdram, uint64_t view);
 void trw_hud_end(uint8_t* rdram);
 void trw_hud_anchor(uint8_t* rdram, int on);
+int trw_wheel_hidden(uint8_t* rdram, uint32_t player);
 void trw_kill_name_colour(uint8_t* rdram, uint64_t entry);
 void trw_frame_buffers_set(uint8_t* rdram);
+void trw_frame_end(uint8_t* rdram);
 void trw_fade_begin(uint8_t* rdram, uint64_t sp);
 void trw_menu_widget_begin(uint8_t* rdram, uint64_t widget, uint64_t sp);
 void trw_menu_widget_end(uint8_t* rdram, uint64_t sp);
@@ -44,6 +46,10 @@ int trw_unlocked_bit(uint8_t* rdram, uint64_t bits, uint64_t n);
 // src/game/extras.cpp: a character's skin count for the skin change, the
 // full count while the Unlocks tab's All Skins is on.
 uint32_t trw_skin_count(uint8_t* rdram, uint64_t offset, uint64_t count);
+
+// src/game/extras.cpp: the camera's field of view (fovy, float bits) with
+// the Graphics tab's Field of View applied.
+uint32_t trw_field_of_view(uint8_t* rdram, uint32_t fovy_bits);
 
 // src/main/custom_music.cpp: a song starts on the music player `seqp`; the
 // volume to give a sequence player (0 while a file replaces its song); a
@@ -85,5 +91,8 @@ int32_t trw_sfx_fx_mix(int32_t fx_mix);
 // toward (`target`, bits of a float), or the pitch the mouse set (Look Spring
 // Override on, Controls tab).
 uint32_t trw_look_pitch_target(uint8_t* rdram, uint32_t player, uint32_t target);
+
+// src/game/stock_runtime_compat.cpp: osClockRate as osInitialize leaves it.
+void trw_set_clock_rate(uint8_t* rdram);
 
 #endif // TRW_RECOMP_HOOKS_H

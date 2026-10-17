@@ -74,6 +74,17 @@ func = "trw_boot_main"
 vram = 0x002A71C4
 value = 0x10000054
 
+# osClockRate (u64 at 0x80147B00): libultra's osInitialize sets it (62.5 MHz,
+# then x 3/4: 46.875 MHz, the CPU counter's rate), but N64Recomp skips the
+# game's osInitialize and the runtime's doesn't set it, so it stayed 0. The
+# game reads it in one place, func_00414430 (osGetTime in seconds), for the
+# menu system's millisecond clock: divided by 0, every timestamp was the same
+# and every step 0. Set right after the game's call.
+[[patches.hook]]
+func = "trw_boot_main"
+before_vram = 0x002A7444
+text = "    trw_set_clock_rate(rdram);"
+
 # func_002372B4 draws a thin black border (fill rectangles, 2-3 pixels) around
 # each player's view, hiding the screen edges on a TV. With the picture
 # expanded to widescreen its sides land at the old 4:3 edges as two vertical
@@ -106,11 +117,14 @@ text = "    trw_hud_end(rdram);"
 # The weapon wheel (func_002183E8, from the HUD routine) and the team select
 # drawn after it (func_00218F08, given the player + 0xCCC) stay centred: the
 # HUD's automatic anchoring would send their tiles in the top quarter to the
-# screen's sides (the wheel's as it turns, the top team's always).
+# screen's sides (the wheel's as it turns, the top team's always). The wheel
+# isn't drawn while it's only open for a quick pick by Q, the mouse wheel or
+# the number keys (src/main/fps_controls.cpp); after_11 is the generated label
+# just after its call.
 [[patches.hook]]
 func = "func_0021EED8"
 before_vram = 0x0021EFBC
-text = "    trw_hud_anchor(rdram, 0);"
+text = "    trw_hud_anchor(rdram, 0);\n    if (trw_wheel_hidden(rdram, (uint32_t)ctx->r19)) goto after_11;"
 
 [[patches.hook]]
 func = "func_0021EED8"
@@ -135,6 +149,13 @@ text = "    trw_fade_begin(rdram, ctx->r29);"
 func = "func_00291B00"
 before_vram = 0x00291EE8
 text = "    trw_frame_buffers_set(rdram);"
+
+# Before the frame's display list is ended (G_ENDDL): text the game drew
+# before the frame's colour buffer was set goes here (src/game/widescreen.cpp).
+[[patches.hook]]
+func = "func_00288DF8"
+before_vram = 0x00288F38
+text = "    trw_frame_end(rdram);"
 
 # Menus in widescreen (src/game/widescreen.cpp): drawn as in 4:3, with the
 # background images also drawn stretched into the bars either side.
@@ -274,6 +295,14 @@ text = "    if (trw_option(11) && (int32_t)ctx->r7 >= 1) ctx->r7 = 2;"
 func = "func_002A1FD0"
 before_vram = 0x002A205C
 text = "    if (!trw_option(15)) ctx->r5 = 0;"
+
+# Graphics tab: Field of View (src/game/extras.cpp). The camera's call to
+# guPerspectiveF (0x002B6ECC); a2 is the vertical angle (float). The other
+# call, at 0x0023590C, uses a fixed 47.5 degrees: left alone.
+[[patches.hook]]
+func = "func_00234FCC"
+before_vram = 0x0023567C
+text = "    ctx->r6 = (gpr)(int32_t)trw_field_of_view(rdram, (uint32_t)ctx->r6);"
 
 # Enhancements tab: Custom Music (src/main/custom_music.cpp). The music
 # object (0x80107DE4, s1 here) has loaded the song it was asked for (+0x28)
