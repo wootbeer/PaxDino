@@ -16,7 +16,7 @@ look, a cheat menu and the medal option. N64 (kseg0) addresses.
 | player + `0x71C` | duck mode |
 | player + `0x724` | head rotation offset; pitch (float, radians) is its first component |
 | player + `0x771` | requested weapon |
-| `0x80119B26`, `0x80119C66`, `0x80119DA6` | frame-rate mode bytes (0 max, 1 60, 2 30, 3 15) |
+| `0x80119B26`, `0x80119C66`, `0x80119DA6` | the GameShark "frame-rate mode": inside the frame buffer setups' +0x124 wait (retraces per frame, 2 in a match), which the game rewrites every frame (STATUS.md round 107) |
 | `0x80140C3C` | frame scale (float; 120 at 60 fps, 60 at 30, 30 at 15) |
 
 ## GameShark codes (community codes)

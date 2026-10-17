@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.2 Beta] - 2026-10-17
+
+### Changed
+- Matches run at 60 frames a second when the Framerate (Graphics) is above
+  Original, so the mouse aims without the lag. Original keeps the game's 30
+  frames a second
+- Mouse Sensitivity covers a wider, more usable range, and the default is
+  faster
+
+### Fixed
+- Mouse look stopped for a moment when switching weapons
+- The level stuttered when turning fast
+- Turning with the mouse wasn't as smooth as with a gamepad
+- Character models showed over the level's name at the start of a match
+
 ## [0.1.1 Beta] - 2026-10-17
 
 ### Added

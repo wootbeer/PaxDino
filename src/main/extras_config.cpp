@@ -9,6 +9,7 @@
 #include "trw_config.h"
 
 #include "recompui/config.h"
+#include "ultramodern/config.hpp"
 #include "trw_crosshair.h"
 #include "trw_music.h"
 
@@ -413,6 +414,19 @@ trw::config::Bloom trw::config::get_bloom() {
         return Bloom::Off;
     }
     return static_cast<Bloom>(std::get<uint32_t>(recompui::config::get_graphics_config().get_option_value(bloom_id)));
+}
+
+bool trw::config::get_high_framerate() {
+    if (!graphics_options_added) {
+        return false;
+    }
+    using ultramodern::renderer::RefreshRate;
+    auto& graphics = recompui::config::get_graphics_config();
+    auto rate = static_cast<RefreshRate>(std::get<uint32_t>(graphics.get_option_value(recompui::config::graphics::options::rr_option)));
+    if (rate == RefreshRate::Manual) {
+        return std::get<double>(graphics.get_option_value(recompui::config::graphics::options::rr_manual_value)) >= 60.0;
+    }
+    return rate == RefreshRate::Display;
 }
 
 float trw::config::get_field_of_view() {

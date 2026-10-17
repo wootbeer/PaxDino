@@ -86,7 +86,7 @@ namespace trw {
 
 static const std::string program_name = "PaxDino: Rage Wars Recomp";
 static const std::u8string program_id = u8"trwrecomp";
-static const std::string version_string = "0.1.1";
+static const std::string version_string = "0.1.2";
 
 template <typename... Ts>
 [[noreturn]] static void exit_error(const char* fmt, Ts... args) {
@@ -191,6 +191,35 @@ static ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callba
     static_assert(false && "Only Linux and Windows are set up in this file so far.");
 #endif
 }
+
+void trw_place_early_text(uint8_t* rdram, uint32_t dl_address); // src/game/widescreen.cpp
+
+// The renderer, with each display list's frame tagged for the view turning
+// (trw::controls::display_list_sent) and a match frame's early text put at
+// its end (trw_place_early_text), just before it's processed.
+class TrwRendererContext : public ultramodern::renderer::RendererContext {
+public:
+    explicit TrwRendererContext(std::unique_ptr<ultramodern::renderer::RendererContext> inner) : inner(std::move(inner)) {}
+    bool valid() override { return inner->valid(); }
+    ultramodern::renderer::SetupResult get_setup_result() const override { return inner->get_setup_result(); }
+    ultramodern::renderer::GraphicsApi get_chosen_api() const override { return inner->get_chosen_api(); }
+    bool update_config(const ultramodern::renderer::GraphicsConfig& old_config, const ultramodern::renderer::GraphicsConfig& new_config) override {
+        return inner->update_config(old_config, new_config);
+    }
+    void enable_instant_present() override { inner->enable_instant_present(); }
+    void send_dl(const OSTask* task) override {
+        trw::controls::display_list_sent((uint32_t)task->t.data_ptr);
+        trw_place_early_text(trw::controls::rdram, (uint32_t)task->t.data_ptr);
+        inner->send_dl(task);
+    }
+    void send_dummy_workload(uint32_t fb_address) override { inner->send_dummy_workload(fb_address); }
+    void update_screen() override { inner->update_screen(); }
+    void shutdown() override { inner->shutdown(); }
+    uint32_t get_display_framerate() const override { return inner->get_display_framerate(); }
+    float get_resolution_scale() const override { return inner->get_resolution_scale(); }
+private:
+    std::unique_ptr<ultramodern::renderer::RendererContext> inner;
+};
 
 static void update_gfx(void*) {
     // poll_inputs() only reads already-buffered SDL state (SDL_GetKeyboardState,
@@ -641,9 +670,9 @@ int main(int argc, char** argv) {
     };
 
     ultramodern::renderer::callbacks_t renderer_callbacks{
-        .create_render_context = [](uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, bool developer_mode) {
+        .create_render_context = [](uint8_t* rdram, ultramodern::renderer::WindowHandle window_handle, bool developer_mode) -> std::unique_ptr<ultramodern::renderer::RendererContext> {
             auto presentation_mode = ultramodern::renderer::PresentationMode::PresentEarly;
-            return recompui::renderer::create_render_context(rdram, window_handle, presentation_mode, developer_mode);
+            return std::make_unique<TrwRendererContext>(recompui::renderer::create_render_context(rdram, window_handle, presentation_mode, developer_mode));
         },
     };
 

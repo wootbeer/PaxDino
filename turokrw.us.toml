@@ -150,13 +150,6 @@ func = "func_00291B00"
 before_vram = 0x00291EE8
 text = "    trw_frame_buffers_set(rdram);"
 
-# Before the frame's display list is ended (G_ENDDL): text the game drew
-# before the frame's colour buffer was set goes here (src/game/widescreen.cpp).
-[[patches.hook]]
-func = "func_00288DF8"
-before_vram = 0x00288F38
-text = "    trw_frame_end(rdram);"
-
 # Menus in widescreen (src/game/widescreen.cpp): drawn as in 4:3, with the
 # background images also drawn stretched into the bars either side.
 [[patches.hook]]
@@ -295,6 +288,22 @@ text = "    if (trw_option(11) && (int32_t)ctx->r7 >= 1) ctx->r7 = 2;"
 func = "func_002A1FD0"
 before_vram = 0x002A205C
 text = "    if (!trw_option(15)) ctx->r5 = 0;"
+
+# 60 frames a second in matches with the Graphics tab's Framerate above
+# Original (src/game/extras.cpp): the frame step func_00292818 has just
+# worked out (f0, before it's stored), with the lower floor.
+[[patches.hook]]
+func = "func_00292818"
+before_vram = 0x00292CA4
+text = "    { uint32_t b = trw_frame_step(rdram, ctx->f0.u32l); ctx->f0.u32l = b; }"
+
+# The game's camera starts (func_00234FCC): mouse look waits until its
+# perspective call below, so the camera and the frame's tag for the view
+# turning (lib-patches/rt64/0008) have one angle (src/main/fps_controls.cpp).
+[[patches.hook]]
+func = "func_00234FCC"
+before_vram = 0x00234FCC
+text = "    trw_camera_begin(rdram);"
 
 # Graphics tab: Field of View (src/game/extras.cpp). The camera's call to
 # guPerspectiveF (0x002B6ECC); a2 is the vertical angle (float). The other

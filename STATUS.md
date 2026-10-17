@@ -5,6 +5,263 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-10-17, round 122: the renderer's camera turn removed
+
+Reported after round 121: the walls still blurred while turning, and much
+less with PAXDINO_NO_TURN=1 (no frame tags), which turned about the same.
+The turn added the mouse motion since the frame's camera was built, but
+the game runs one to two frames ahead of the renderer, by varying
+amounts, so that motion changed from one game frame to the next by up to
+a frame's turn: the view jumped back and forth between batches, seen as
+blur. With the mouse applied once a frame (rounds 117 to 119) and matches
+at 60, RT64's own interpolation is smooth and the turn's lower latency
+wasn't felt, so it's gone: lib-patches/rt64/0008 and the frame tags
+(src/main/fps_controls.cpp) removed. The mouse is still added up on the
+event thread and applied at each frame's first camera call; the frame
+timing log stays. Checked: 300 pixels turns 1.0 rad, pitch moves.
+
+## 2026-10-17, round 121: ghosting while turning
+
+Reported after round 120: smooth, but ghosting. Round 120 turned the
+interpolated views by the motion since the frame's camera was built, so
+they show the angles between the last frame's and this one's plus that
+motion. Views RT64 doesn't interpolate (not matched to one in the last
+frame) were turned the same way from this frame's angles, so they showed
+up to a game frame's turn ahead of the rest: parts of the scene apart
+while turning. The workload now also gets the last frame's tag (kept as
+each tag is taken), and those views are turned back toward it by the
+frame's weight first, so they land on the same angles. Checked: builds,
+renders and turns in a match.
+
+## 2026-10-17, round 120: the turned view stood still between game frames
+
+The frame timing log from a match (Framerate Display, 144 Hz, fullscreen):
+600 game frames every 10 seconds, none over 24 ms, every display list to
+the renderer on time. So the remaining mouse-only stutter is after the
+game. RT64 renders the 2 or 3 frames shown from one game frame together,
+as it comes (rt64_workload_queue.cpp, displayFrames), and the present
+queue shows them a refresh apart. Patch 0008 turned each to the latest
+mouse angles: the interpolated rotation turned by latest - lerp(previous
+tag, tag, weight), which comes out as the latest angles on every frame
+of the batch, all read within a few milliseconds. So the view stood still
+for 2 or 3 refreshes and stepped at the next game frame, a 2-3-2-3 cadence
+at 144 Hz that a gamepad (no turn) doesn't have. Now every frame from a
+game frame is turned by the same latest - tag (the motion since its camera
+was built): the view follows RT64's interpolation, ahead of it by that
+motion. The previous frame's tag is no longer needed. Checked: builds,
+turns in a match (sandbox renders too slowly to show the cadence).
+
+## 2026-10-17, round 119: one mouse step per frame; frame timing log
+
+Recordings after round 118: the turn steps even out to within what a
+60 fps recording of a 144 Hz screen can show; a few single frames repeat,
+which OBS put down to the game (one frame missed on its side). A frame
+timing log for that (PAXDINO_FRAMELOG=1 in the environment): game frames
+over 24 ms apart and late display lists, to frametimes.log in the working
+directory, with totals every 10 seconds.
+
+The log's first count found the camera function (func_00234FCC) runs three
+times a frame in a match: twice from func_00236854 at the start of the
+display list (a0 0x8013F008, then the player's camera), then from
+func_00220A5C after the sky. Mouse look was applied at each, so motion
+coming in between them turned the later views of the same frame further
+than the first, and the frame's tag was the last call's. Now only the
+frame's first camera call (a new display list buffer, or the head moved
+back) takes the motion and the tag. Checked: one per frame sent, 300
+pixels still turns 1.0 rad.
+
+## 2026-10-17, round 118: mouse motion taken as it comes
+
+A recording after round 117 (Framerate Display, 144 Hz, recorded at 60):
+a new picture every frame, but the turn per picture went uneven, about one
+in five barely moving and the next making up for it (-21 then -2, 22 then
+0 then 5). Round 117 applied the motion once a frame, but the motion
+itself was still the frontend's, handed over at the controller thread's
+poll, so a frame got the motion up to that poll and the rest waited for the
+next one. The motion is now the event thread's own count (already kept for
+the renderer's latest angles), added up as each event comes and applied in
+full at the start of each frame's camera; the controller reads only say
+whether plain mouse look is on. Checked: 300 pixels still turns 1.0 rad.
+
+## 2026-10-17, round 117: mouse look applied once a frame
+
+Reported after round 115: the turning stutter is with the mouse only, not a
+gamepad (mouse polling about 904 Hz), the same at original and higher
+framerates. The game reads the stick once a frame and turns by it; the
+mouse was turned in at each controller read, which the controller thread
+does at retraces, not in step with the game's frames, so a frame got one,
+two or no reads' worth of motion and the turn per frame was uneven. Now a
+controller read only adds the motion up, and it's applied to the player's
+yaw and pitch once a frame at the start of the camera function
+(trw_camera_begin, 0x00234FCC), like a stick. The frame's camera tag is
+taken at the same point, so the hold from the start of the camera to its
+end (round 112) is gone. Checked: 300 pixels still turns 1.0 rad, pitch
+moves and springs back with Look Spring Override off.
+
+## 2026-10-17, round 116: the level name under character models
+
+Reported: in the level fly-through a character model showed over the
+level's name. The name (round 98) was drawn at a hook in func_00288DF8, and
+character models are drawn later in the frame, after that function. Moving
+the hook to the function's end didn't help, and drawing it after the
+display list's last end (DF) didn't show at all: RT64 ends the frame at its
+full sync (E9). The name is now put in as the display list goes to the
+renderer (trw_place_early_text, src/game/widescreen.cpp, called from the
+renderer wrapper in src/main/main.cpp): the list is walked to its last E9,
+the text and that E9 go in a block at the top of the display list buffer,
+and the E9 is replaced with a call to the block. The text is kept per
+display list buffer, as the game builds a frame ahead. Checked: the name
+and the trial objective show over the models.
+
+## 2026-10-17, round 115: the turned view keeps RT64's interpolation
+
+Reported after round 114: still some stutter moving and turning; smooth
+before the mouse work. The turned view took the newest game frame's rotation
+and added the mouse's turn since: the yaw and pitch were right, but the rest
+of the game's camera motion, the walking bob and tilt, then stepped at the
+game's 60 frames a second instead of being interpolated. Now the rotation is
+RT64's interpolated one, turned by the mouse's angles past those
+interpolated the same way between the last frame's tag and this one's (the
+previous workload keeps its tag); the position is interpolated between the
+two frames' camera positions (round 114). At a frame's end (weight 1) and
+the next one's start (weight 0) the result is the same view, so it joins
+without a step. Still not seen in the sandbox: it shows only whole game
+frames (weight 1, checked again with Manual 120), where the turn and the
+walk logged smooth.
+
+## 2026-10-17, round 114: the turned view's position, moving and turning
+
+Reported after round 113: snappy, but almost stuttering moving forward and
+turning at once. The turned view (rt64/0008) took the camera's position from
+RT64's interpolated view, and RT64 interpolates a view's rotation (slerp)
+and offset (lerp) apart (RigidBody::lerp): the offset is the position
+rotated into the view, so the position read back from the mix isn't the
+straight line between the frames' positions while the view turns, and swings
+off it (more the farther the camera is from the origin). The position is now
+interpolated itself, between the last frame's camera position and this
+one's, with the frame weights (and the motion-vector view with the previous
+weight). Not seen in the sandbox: it renders slower than the game, so it
+never shows frames between the game's.
+
+## 2026-10-17, round 113: the frame tags went to the wrong frames
+
+Reported after round 112: worse, stuttering even on slight turns. Logged in
+the sandbox (a steady synthetic turn, the angle each frame shown ended at):
+the tag a workload carried wasn't its frame's. Workload 4121 carried yaw
+0.0400 while its camera matrix had 0.0133 (yaw = pi minus the matrix's),
+the angle two frames before: the game runs a frame or two ahead of the
+renderer, so the tag set at the frame end went to an older frame. Each frame
+was turned by the wrong amount (round 109 already; round 112's held reads
+made the mismatch uneven, hence worse). Pitch can't be read back from the
+matrix instead: while turning the camera's pitch is minus the player's, but
+when the mouse stops the game eases the camera toward level and the
+player's pitch stays.
+So the tag now goes with the display list: the camera notes the angles for
+the display list buffer being built (0x806D2000 or 0x806E9000, from the head
+at 0x8010A574), and a wrapper around the renderer context (main.cpp,
+TrwRendererContext) hands that buffer's tag to RT64 in send_dl, before the
+list is processed and its workload set up (advanceWorkload, same thread).
+Checked: the same turn, 193 frames, every tag matching its matrix; the angle
+shown moving one way only, in even steps.
+
+## 2026-10-17, round 112: the level stuttering on fast turns
+
+Reported after round 109: turning fast, the level stuttered. Two ways the
+turn given to RT64 could step back and forth:
+- The pending motion was zeroed at the game's controller read, but the
+  motion the game took had been added up when its input was polled, a
+  moment before: motion in between left the turn for a read, and came back
+  with the next. The read's motion (raw pixels) now comes off the pending
+  count instead, so it always holds what the game hasn't taken. Motion
+  is also left out while game input is off (the settings overlay), as
+  RecompFrontend does.
+- The controller is read on its own thread, at the same retraces as the
+  game's frame: a read in the middle of the camera (func_00234FCC) gave the
+  camera one angle and the frame's tag another. A hook at the camera's start
+  marks it; a read meanwhile keeps its motion for the next read (at most
+  8 ms), so the angles hold until the tag is noted.
+Checked: 300 pixels of motion turned the player 1.0005 rad (300 x
+0.003335), none lost.
+
+## 2026-10-17, round 111: mouse look during weapon picks (issue #9)
+
+Reported: switching weapons with the mouse wheel stopped mouse look for a
+moment (at 60 frames a second only a brief stutter). A quick pick (wheel,
+Q / E, 1-8) opens the game's wheel for a few reads, and the mouse's motion
+was thrown away meanwhile. Mouse look sets the angles itself, apart from
+the stick the wheel is steered by, so it now goes on through the pick
+(fps_controls.cpp, mouse_look, which the plain look uses too).
+Checked: two wheel steps switched the weapon (3, 0, 6) as before.
+
+## 2026-10-17, round 110: mouse sensitivity, second pass
+
+Requested: the default as fast as 80% was (0.003335 rad per pixel, about
+twice round 108's), 0% not so slow, more room at the top. 50% is now
+0.003335, 0% half that (about the original default), 100% three times it
+(0.01); evenly on each side of 50%.
+
+## 2026-10-17, round 109: the view turned with the latest mouse motion
+
+Reported after round 107 (144 Hz monitor): still a slight lag, most of all
+turning around fast. With the Framerate above the game's rate RT64 shows
+frames between the game's, the camera interpolated between the last two
+(render/rt64_projection_processor.cpp), so the view trailed the mouse by up
+to a game frame. lib-patches/rt64/0008: the game tags each frame with the
+yaw and pitch its camera was built with (the FOV hook in func_00234FCC notes
+the mouse player's angles; trw_frame_end hands them to RT64, which takes them
+into the next workload in advanceWorkload, after the frame's display list is
+processed), and keeps RT64 up to date with the latest angles: the player's
+after the last controller read plus the mouse motion since, from SDL's
+motion events as they come (fps_controls.cpp). For each frame shown, every
+perspective view with a camera in it (the weapon's own plain view is left
+alone) gets the frame's rotation turned by the difference, about the world's
+up axis and the camera's sideways axis, around the interpolated camera
+position. In a match, single view, plain mouse look (not the menus, the
+pause, the wheel or the team select), Framerate above Original.
+Checked (sandbox, with a test offset): 0.3 rad of extra yaw gave the same
+picture as the game turning the player 0.3 rad (walls and an item on the
+floor in the same places); extra pitch looks up for a positive offset, the
+game's sign. The end hook also runs for display lists without the camera, so
+only frames that built it are tagged, and RT64 uses a tag once.
+
+## 2026-10-17, round 108: mouse sensitivity curve; no camera easing
+
+Requested: the Mouse Sensitivity slider's low end was too low to use, its
+high end not high enough, and the default should be about 15% faster. The
+slider stays 0-100% (0 still turns mouse aim off), but the turn per pixel
+now follows an even curve: 0.001725 rad at 50% (15% over the old 0.0015),
+three times that at 100%, a third at 0%, each step the same ratio
+(fps_controls.cpp, mouse_look_radians). Saved settings at the default get
+the new default.
+Also checked, on the question whether the game smooths the view itself:
+no. The mouse writes the player's yaw and pitch directly (the game's stick
+speed doesn't apply), and with the yaw turned 0.5 rad at one frame's start,
+the camera matrix the game builds (0x8069FA00 / 0x8069FA40, alternating)
+had the whole turn the next frame.
+
+## 2026-10-17, round 107: matches at 60 frames a second
+
+Reported (issue #1): mouse aim felt smoothed. Matches ran at 30 frames a
+second, with RT64 interpolating between frames above that, so the view
+caught up with the mouse a frame or more late. Each frame func_00292818
+averages the retraces the last frames took (the four counters
+0x80140C34, 0x80140CA4, 0x801199F8 and 0x801408AC, minus the largest,
+over 3), with a floor of 2 (4 in one case), into 0x801408A8, and makes the
+frame step from it (0x800CD648 = retraces x 15 / 60.0 at 0x80140C3C);
+func_00292220 then stores the same count as the frame buffer setup's wait
+(+0x124, the three setups at *0x801408B0), which the scheduler
+(func_0028E9DC) holds the next frame for. (The "frame-rate mode bytes" in
+RAM_NOTES are inside that word.) With the Graphics tab's Framerate above
+Original (Display, or Manual at 60 or more), in a match, a hook before the
+step is stored (0x00292CA4) sets the wait to 1 and the step from the same
+average with a floor of 1: 0.25 at 60 frames a second, the same game time
+per second as 0.5 at 30, and more on a PC that can't keep 60. At Original
+nothing changes. One option, not a separate one: a Framerate above Original
+with the game at 30 was the mismatch.
+Checked (sandbox, which renders at about 15-25 frames a second, so not 60):
+waits 1 with Display, the game's own with Original; game time against real
+time as close or closer than the original's; a match plays.
+
 ## 2026-10-17, round 106: double click a slider for its default
 
 Requested: double clicking a slider in the settings puts it back to its

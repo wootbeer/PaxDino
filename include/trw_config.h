@@ -72,6 +72,9 @@ namespace trw::config {
     // recompui::config::set_graphics_options_after_aspect_ratio() before
     // create_graphics_tab().
     void add_graphics_options_after_aspect_ratio(recomp::config::Config& graphics);
+    // Graphics tab: whether the Framerate is above the original (Display, or
+    // Manual at 60 or more): matches then run at 60 frames a second.
+    bool get_high_framerate();
     // Graphics tab: the field of view in matches, in degrees across a 4:3
     // picture; 90 is the game's own.
     float get_field_of_view();

@@ -17,6 +17,7 @@
 // drift. So each menu is drawn exactly as in 4:3, and its background images
 // are drawn a second time, stretched, into the bars either side.
 #include <algorithm>
+#include <mutex>
 #include <vector>
 #include <cstdlib>
 #include <atomic>
@@ -957,18 +958,22 @@ static void clear_colour_buffer(uint8_t* rdram, uint32_t width, uint32_t height,
 extern "C" void trw_apply_extras(uint8_t* rdram);
 
 // Text drawn before a match frame's colour buffer is set: a trial's
-// objective ("PROVING GROUNDS", "acquire 2 frags", ...) during the level's
-// fly-through. The game draws it first, into whichever colour buffer the last
-// frame left set (on the N64 the finished frame, about to be shown), then
-// fills the new buffer and draws the level, which in RT64 leaves the text
-// nowhere to be seen. It's moved to the end of the frame instead: copied from
-// the display list here (from its scissor, so it keeps its own setup, up to
-// the frame's own setup: its next display list call or colour image) and
-// NOPed, then put back just before the frame's end (trw_frame_end).
-static std::vector<uint32_t> early_text;
+// objective ("PROVING GROUNDS", "acquire 2 frags", ...) or the level's name
+// during the fly-through. The game draws it first, into whichever colour
+// buffer the last frame left set (on the N64 the finished frame, about to be
+// shown), then fills the new buffer and draws the level, which in RT64 leaves
+// the text nowhere to be seen. It's moved to the end of the frame instead:
+// copied from the display list here (from its scissor, so it keeps its own
+// setup, up to the frame's own setup: its next display list call or colour
+// image) and NOPed, then, as the finished list goes to the renderer, put at
+// its very end (trw_place_early_text): the frame's last end command becomes a
+// branch to it. (Put back at the end of the scene's drawing in the game, a
+// character model the game draws later, in the fly-through, covered it.)
+static std::mutex early_text_mutex;
+static std::vector<uint32_t> early_text[2]; // by display list buffer
 
 static void take_early_text(uint8_t* rdram, uint32_t base, uint32_t head) {
-    early_text.clear();
+    std::vector<uint32_t> text;
     if (head <= base || head - base > 0x10000) {
         return;
     }
@@ -993,28 +998,89 @@ static void take_early_text(uint8_t* rdram, uint32_t base, uint32_t head) {
         return;
     }
     for (uint32_t a = from; a < to; a += 8) {
-        early_text.push_back((uint32_t)MEM_W(0, (gpr)(int32_t)a));
-        early_text.push_back((uint32_t)MEM_W(4, (gpr)(int32_t)a));
+        text.push_back((uint32_t)MEM_W(0, (gpr)(int32_t)a));
+        text.push_back((uint32_t)MEM_W(4, (gpr)(int32_t)a));
         MEM_W(0, (gpr)(int32_t)a) = 0; // G_SPNOOP
         MEM_W(4, (gpr)(int32_t)a) = 0;
     }
+    std::scoped_lock lock(early_text_mutex);
+    early_text[base >= kDlBufferB ? 1 : 0] = std::move(text);
 }
 
-// Before the game ends a match frame's display list (func_00288DF8).
-extern "C" void trw_frame_end(uint8_t* rdram) {
-    if (early_text.empty() || !head_valid(rdram)) {
-        early_text.clear();
+// As a display list goes to the renderer (src/main/main.cpp): the text taken
+// from it, if any, after everything else. The list is walked as the RSP
+// would (calls return, branches don't) to its last full sync (the renderer
+// ends the frame there: anything after it was dropped); that becomes a call
+// to the text, copied to the top of the buffer (the game's frames use only
+// the start), followed by the full sync and a return.
+void trw_place_early_text(uint8_t* rdram, uint32_t dl_address) {
+    uint32_t addr = (dl_address & 0x1FFFFFFFu) | 0x80000000u;
+    int buffer = addr >= kDlBufferA && addr < kDlBufferA + 0x17000 ? 0 : (addr >= kDlBufferB && addr < kDlBufferB + 0x17000 ? 1 : -1);
+    if (buffer < 0 || rdram == nullptr) {
         return;
     }
-    uint32_t head = (uint32_t)MEM_W(0, (gpr)(int32_t)kDlHead);
-    uint32_t base = head >= kDlBufferB ? kDlBufferB : kDlBufferA;
-    if (head + early_text.size() * 4 + 8 <= base + (kDlBufferB - kDlBufferA)) {
-        for (size_t i = 0; i < early_text.size(); i++) {
-            MEM_W(0, (gpr)(int32_t)(head + i * 4)) = (int32_t)early_text[i];
-        }
-        MEM_W(0, (gpr)(int32_t)kDlHead) = (int32_t)(head + early_text.size() * 4);
+    std::vector<uint32_t> text;
+    {
+        std::scoped_lock lock(early_text_mutex);
+        text = std::move(early_text[buffer]);
+        early_text[buffer].clear();
     }
-    early_text.clear();
+    if (text.empty()) {
+        return;
+    }
+    auto valid = [](uint32_t a) { return a >= 0x80000400u && a < 0x80800000u && (a & 7) == 0; };
+    uint32_t stack[18];
+    int depth = 0;
+    uint32_t p = addr;
+    uint32_t sync = 0;
+    for (int steps = 0; steps < 200000 && valid(p); steps++) {
+        uint32_t w0 = (uint32_t)MEM_W(0, (gpr)(int32_t)p);
+        uint32_t w1 = (uint32_t)MEM_W(4, (gpr)(int32_t)p);
+        uint32_t op = w0 >> 24;
+        if (op == 0xDE) { // G_DL: call (pushes) or branch
+            uint32_t target = (w1 & 0x1FFFFFFFu) | 0x80000000u;
+            if (!valid(target)) {
+                return;
+            }
+            if (((w0 >> 16) & 0xFF) == 0) {
+                if (depth == 18) {
+                    return;
+                }
+                stack[depth++] = p + 8;
+            }
+            p = target;
+            continue;
+        }
+        if (op == 0xDF) { // G_ENDDL
+            if (depth == 0) {
+                break;
+            }
+            p = stack[--depth];
+            continue;
+        }
+        if (op == 0xE9) { // G_RDPFULLSYNC
+            sync = p;
+        }
+        p += 8;
+    }
+    if (sync == 0) {
+        return;
+    }
+    uint32_t base = buffer == 0 ? kDlBufferA : kDlBufferB;
+    uint32_t block = base + 0x17000 - (uint32_t)(text.size() * 4) - 16;
+    if (sync >= block) {
+        return;
+    }
+    for (size_t i = 0; i < text.size(); i++) {
+        MEM_W(0, (gpr)(int32_t)(block + i * 4)) = (int32_t)text[i];
+    }
+    uint32_t tail = block + (uint32_t)(text.size() * 4);
+    MEM_W(0, (gpr)(int32_t)tail) = MEM_W(0, (gpr)(int32_t)sync); // the full sync
+    MEM_W(4, (gpr)(int32_t)tail) = MEM_W(4, (gpr)(int32_t)sync);
+    MEM_W(0, (gpr)(int32_t)(tail + 8)) = (int32_t)0xDF000000; // G_ENDDL: back
+    MEM_W(4, (gpr)(int32_t)(tail + 8)) = 0;
+    MEM_W(0, (gpr)(int32_t)sync) = (int32_t)0xDE000000; // G_DL, call
+    MEM_W(4, (gpr)(int32_t)sync) = (int32_t)block;
 }
 
 extern "C" void trw_frame_buffers_set(uint8_t* rdram) {

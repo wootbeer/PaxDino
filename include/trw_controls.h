@@ -25,6 +25,11 @@ namespace trw::controls {
     // The mouse cursor in the game's menus (include/trw_menu_cursor.h):
     // true while it shows, with its position as a fraction of the window.
     bool menu_cursor(float& x, float& y);
+    // The game's camera call (src/game/extras.cpp): mouse look is applied
+    // there, once a frame like a stick. Each display list as it goes to the
+    // renderer (src/main/main.cpp), for the frame timing log.
+    void camera_begin();
+    void display_list_sent(uint32_t dl_address);
     // Set at boot (tlb_views.cpp) so the controls can read the game's state.
     extern uint8_t* rdram;
 }

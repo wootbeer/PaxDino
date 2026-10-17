@@ -24,7 +24,6 @@ void trw_hud_anchor(uint8_t* rdram, int on);
 int trw_wheel_hidden(uint8_t* rdram, uint32_t player);
 void trw_kill_name_colour(uint8_t* rdram, uint64_t entry);
 void trw_frame_buffers_set(uint8_t* rdram);
-void trw_frame_end(uint8_t* rdram);
 void trw_fade_begin(uint8_t* rdram, uint64_t sp);
 void trw_menu_widget_begin(uint8_t* rdram, uint64_t widget, uint64_t sp);
 void trw_menu_widget_end(uint8_t* rdram, uint64_t sp);
@@ -50,6 +49,13 @@ uint32_t trw_skin_count(uint8_t* rdram, uint64_t offset, uint64_t count);
 // src/game/extras.cpp: the camera's field of view (fovy, float bits) with
 // the Graphics tab's Field of View applied.
 uint32_t trw_field_of_view(uint8_t* rdram, uint32_t fovy_bits);
+
+// src/game/extras.cpp: the game's camera (func_00234FCC) starts.
+void trw_camera_begin(uint8_t* rdram);
+
+// src/game/extras.cpp: the frame step (float bits), for 60 frames a second
+// in matches.
+uint32_t trw_frame_step(uint8_t* rdram, uint32_t step_bits);
 
 // src/main/custom_music.cpp: a song starts on the music player `seqp`; the
 // volume to give a sequence player (0 while a file replaces its song); a

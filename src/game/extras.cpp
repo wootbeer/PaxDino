@@ -313,8 +313,45 @@ extern "C" void trw_trial_map_build(int building) {
 void trw_apply_weapon_rules(uint8_t* rdram, bool in_match); // src/game/weapon_rules.cpp
 void trw_set_weapon_reverb(bool on, float level); // src/game/weapon_reverb.cpp
 
+// 60 frames a second in matches, with the Graphics tab's Framerate above
+// Original (at Original the game runs as it always did). Each frame,
+// func_00292818 averages the retraces the last frames took (three of the
+// four counters below), never fewer than 2 (4 in one case), into
+// 0x801408A8, and makes the frame step from it (0x800CD648, how far each
+// frame moves things on: retraces x 15 / 60). func_00292220 then has the
+// frame's buffer wait that many retraces before the next starts (its setup's
+// +0x124), so a match ran at 30 frames a second at most. With the higher
+// rate the wait is 1 retrace and the step comes from the same average with
+// a floor of 1: at 60 frames a second the step is 0.25, and a PC that can't
+// keep up takes more retraces, and the step follows, as on the console.
+namespace {
+    bool fps60_active = false;
+}
+
+extern "C" uint32_t trw_frame_step(uint8_t* rdram, uint32_t step_bits) {
+    if (!fps60_active) {
+        return step_bits;
+    }
+    // The game's average (func_00292818), without its floor.
+    uint32_t c[4] = {
+        (uint32_t)MEM_W(0, (gpr)(int32_t)0x80140C34), (uint32_t)MEM_W(0, (gpr)(int32_t)0x80140CA4),
+        (uint32_t)MEM_W(0, (gpr)(int32_t)0x801199F8), (uint32_t)MEM_W(0, (gpr)(int32_t)0x801408AC),
+    };
+    uint32_t sum = c[0] + c[1] + c[2] + c[3];
+    uint32_t most = std::max(std::max(c[0], c[1]), std::max(c[2], c[3]));
+    uint32_t retraces = std::max<uint32_t>((sum - most + 2) / 3, 1);
+    MEM_W(0, (gpr)(int32_t)0x801408A8) = 1; // the wait
+    uint32_t rate_bits = (uint32_t)MEM_W(0, (gpr)(int32_t)0x80140C3C); // 60.0, retraces a second
+    float rate;
+    std::memcpy(&rate, &rate_bits, sizeof(rate));
+    float step = (float)(retraces * 15) / rate;
+    std::memcpy(&step_bits, &step, sizeof(step));
+    return step_bits;
+}
+
 // From the frame start (trw_frame_buffers_set, src/game/widescreen.cpp).
 extern "C" void trw_apply_extras(uint8_t* rdram) {
+    fps60_active = trw::config::get_high_framerate() && in_match(rdram);
     all_trials = trw::config::get_option(trw::config::Option::AllTrials);
     // Menus Only: the filter in the front end (title, menus, selects) and the
     // options opened from the pause list (drawn full-screen like the front
@@ -369,6 +406,10 @@ extern "C" void trw_apply_extras(uint8_t* rdram) {
 // perspective with guPerspectiveF (0x002B6ECC) from a vertical angle, 74.4
 // degrees normally (90 across at 4:3) and narrower when zoomed. The setting,
 // across a 4:3 picture, scales it in tangents, so zooming keeps working.
+extern "C" void trw_camera_begin(uint8_t*) {
+    trw::controls::camera_begin();
+}
+
 extern "C" uint32_t trw_field_of_view(uint8_t*, uint32_t fovy_bits) {
     float setting = trw::config::get_field_of_view();
     if (setting == 90.0f) {

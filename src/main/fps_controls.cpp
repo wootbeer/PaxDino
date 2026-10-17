@@ -26,7 +26,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #ifdef _WIN32
 #include "SDL.h"
@@ -38,6 +40,7 @@
 #include "recompinput/input_state.h"
 #include "recompinput/profiles.h"
 #include "recompinput/players.h"
+#include "recompui/config.h"
 #include "recompui/recompui.h"
 #include "trw_config.h"
 #include "trw_menu_cursor.h"
@@ -63,9 +66,25 @@ namespace {
     constexpr uint16_t BTN_DPAD_LEFT = 0x0200;
     constexpr uint16_t BTN_DPAD_RIGHT = 0x0100;
 
-    // Radians per pixel of mouse motion at 100% sensitivity (50%, the
-    // default, gives 0.0015).
-    constexpr float mouse_radians_per_pixel = 0.003f;
+    // Radians per pixel of mouse motion: 0.003335 at 50% sensitivity (the
+    // default), half that at 0% and three times it at 100%, evenly on each
+    // side (each step the same ratio), so the whole slider is usable. 0%
+    // itself is off (the cursor is freed).
+    constexpr float mouse_radians_at_default = 0.003335f;
+    constexpr float mouse_sensitivity_low = 2.0f;  // the default over 0%'s
+    constexpr float mouse_sensitivity_high = 3.0f; // 100%'s over the default
+
+    // RecompFrontend scales the motion by the sensitivity (percent / 100);
+    // the look's own scale is applied instead.
+    float mouse_look_radians(float scaled_pixels) {
+        float percent = (float)recompui::config::general::get_mouse_sensitivity();
+        if (percent <= 0.0f) {
+            return 0.0f;
+        }
+        float pixels = scaled_pixels / (percent / 100.0f);
+        float range = percent < 50.0f ? mouse_sensitivity_low : mouse_sensitivity_high;
+        return pixels * mouse_radians_at_default * std::pow(range, (percent - 50.0f) / 50.0f);
+    }
 
     // The player objects (the first one's pointer at 0x8013EF84, the rest
     // 0x16E8 after it, each with its controller port at +0x5D4; a list
@@ -210,33 +229,78 @@ namespace {
         return -1;
     }
 
-    // Adds mouse motion to the yaw and pitch of the player on `port`.
-    void apply_mouse_look(int port) {
-        if (trw::controls::rdram == nullptr || !match_live()) {
-            return;
-        }
-        float dx = 0.0f;
-        float dy = 0.0f;
-        recompinput::get_mouse_deltas(&dx, &dy); // already scaled by the sensitivity option
-        if (dx == 0.0f && dy == 0.0f) {
-            return;
-        }
-        uint32_t player = player_on_port(port);
-        if (player == 0) {
-            return;
-        }
+    // Adds mouse motion (`dx`, `dy`, scaled by the sensitivity option) to
+    // the yaw and pitch of `player`.
+    void turn_player_by(uint32_t player, float dx, float dy) {
         if (trw::config::get_invert_mouse_y()) {
             dy = -dy;
         }
-        float yaw = read_float(player + player_yaw_offset) + dx * mouse_radians_per_pixel;
+        float yaw = read_float(player + player_yaw_offset) + mouse_look_radians(dx);
         if (yaw > tau) yaw -= tau;
         if (yaw < -tau) yaw += tau;
         write_float(player + player_yaw_offset, yaw);
 
         // Screen y grows downward; pitch grows looking up.
-        float pitch = read_float(player + player_pitch_offset) - dy * mouse_radians_per_pixel;
+        float pitch = read_float(player + player_pitch_offset) - mouse_look_radians(dy);
         pitch = std::clamp(pitch, -pitch_limit, pitch_limit);
         write_float(player + player_pitch_offset, pitch);
+    }
+
+    // Mouse look is applied once a game frame, as the camera is built (at
+    // the start of func_00234FCC, trw::controls::camera_begin), with all the
+    // mouse motion seen since (on the event thread, as it comes). The
+    // controller is read on its own thread, at retraces not in step with the
+    // game's frames, so motion taken at the reads gave frames uneven turns
+    // (two reads' worth, or none), a stutter a controller's stick (applied by
+    // the game in its frame) doesn't have. The reads only say whether plain
+    // mouse look is on, and for which player.
+    std::mutex turn_mutex;
+    bool turn_kept = false;           // the last read of the mouse's port was plain mouse look (game thread)
+    uint32_t look_player = 0;         // the mouse's player while plain mouse look is on
+    float turn_pending_x = 0.0f, turn_pending_y = 0.0f; // mouse pixels not yet applied
+    // The display list buffers the game builds frames in, by turns.
+    constexpr uint32_t dl_head_addr = 0x8010A574;
+    constexpr uint32_t dl_buffer_a = 0x806D2000;
+    constexpr uint32_t dl_buffer_b = 0x806E9000;
+    constexpr uint32_t dl_buffer_size = 0x17000;
+
+    // 0 or 1 for an address in one of the buffers, -1 otherwise.
+    int dl_buffer_index(uint32_t addr) {
+        addr = (addr & 0x1FFFFFFFu) | 0x80000000u;
+        if (addr >= dl_buffer_a && addr < dl_buffer_a + dl_buffer_size) return 0;
+        if (addr >= dl_buffer_b && addr < dl_buffer_b + dl_buffer_size) return 1;
+        return -1;
+    }
+
+    // The event thread: mouse motion not yet applied to the player. (The
+    // same events RecompFrontend adds up for the game, with the same
+    // exceptions.)
+    void add_turn_motion(const SDL_MouseMotionEvent& motion) {
+        std::scoped_lock lock(turn_mutex);
+        if (look_player == 0 || !SDL_GetRelativeMouseMode() || recompinput::game_input_disabled()) {
+            return;
+        }
+        turn_pending_x += (float)motion.xrel;
+        turn_pending_y += (float)motion.yrel;
+    }
+
+    // The game's controller read of the mouse's port: plain mouse look on
+    // (`player`) or off (0).
+    void read_mouse_look(uint32_t player) {
+        std::scoped_lock lock(turn_mutex);
+        if (player != look_player) {
+            // Starting or stopping: nothing pending.
+            turn_pending_x = turn_pending_y = 0.0f;
+        }
+        look_player = player;
+    }
+
+    // Plain mouse look for the player on `port` (`look`: a fresh poll).
+    void mouse_look(int port, uint32_t player, bool look) {
+        if (look) {
+            read_mouse_look(match_live() ? player : 0);
+        }
+        turn_kept = true;
     }
 
     // The player the mouse aims (its look in use), or 0.
@@ -308,6 +372,9 @@ namespace {
         case SDL_MOUSEMOTION:
             if (menu_mode.load()) {
                 move_cursor(event->motion);
+            }
+            else {
+                add_turn_motion(event->motion);
             }
             break;
         case SDL_MOUSEBUTTONDOWN:
@@ -958,6 +1025,14 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
 
 bool trw::controls::get_input(int player_index, uint16_t* buttons, float* x, float* y) {
     bool ret = get_input_for_port(player_index, buttons, x, y);
+    // The mouse's player out of plain mouse look (menus, the pause, the
+    // weapon wheel, the team select): no view turning.
+    if (player_index == mouse_port()) {
+        if (!turn_kept) {
+            read_mouse_look(0);
+        }
+        turn_kept = false;
+    }
     // A as the game gets it (the keys' own presses included), for holding
     // the wheel past the pause.
     if (player_index >= 0 && player_index < 4) {
@@ -965,6 +1040,115 @@ bool trw::controls::get_input(int player_index, uint16_t* buttons, float* x, flo
         last_buttons[player_index].store(*buttons);
     }
     return ret;
+}
+
+// Frame timing log (PAXDINO_FRAMELOG=1 in the environment): each game frame
+// that took over 24 ms from the last (its camera's start to the next), and
+// how late its display list went to the renderer, to frametimes.log in the
+// working directory, with a line of totals every 10 seconds.
+namespace {
+    struct FrameLog {
+        FILE* file = nullptr;
+        bool checked = false;
+        std::chrono::steady_clock::time_point start, last_camera, last_sent, last_summary;
+        bool have_camera = false, have_sent = false;
+        uint32_t frames = 0, late = 0, sent = 0;
+        double worst = 0.0, worst_sent = 0.0;
+    };
+    FrameLog frame_log;
+
+    bool frame_log_on() {
+        if (!frame_log.checked) {
+            frame_log.checked = true;
+            const char* on = std::getenv("PAXDINO_FRAMELOG");
+            if (on != nullptr && on[0] != '\0' && on[0] != '0') {
+                frame_log.file = std::fopen("frametimes.log", "w");
+                frame_log.start = frame_log.last_summary = std::chrono::steady_clock::now();
+            }
+        }
+        return frame_log.file != nullptr;
+    }
+
+    double ms_between(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    }
+
+    // The game thread, at each frame's camera.
+    void log_camera_frame() {
+        if (!frame_log_on()) {
+            return;
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (frame_log.have_camera) {
+            double ms = ms_between(frame_log.last_camera, now);
+            frame_log.frames++;
+            frame_log.worst = std::max(frame_log.worst, ms);
+            if (ms > 24.0) {
+                frame_log.late++;
+                std::fprintf(frame_log.file, "%10.1f  game frame %6.1f ms  retraces %u\n",
+                    ms_between(frame_log.start, now), ms, *guest_word(0x801408A8));
+            }
+        }
+        frame_log.have_camera = true;
+        frame_log.last_camera = now;
+        if (ms_between(frame_log.last_summary, now) >= 10000.0) {
+            std::fprintf(frame_log.file, "%10.1f  -- %u frames (%u to renderer), %u over 24 ms, slowest %.1f ms, slowest to renderer %.1f ms\n",
+                ms_between(frame_log.start, now), frame_log.frames, frame_log.sent, frame_log.late, frame_log.worst, frame_log.worst_sent);
+            std::fflush(frame_log.file);
+            frame_log.frames = frame_log.late = frame_log.sent = 0;
+            frame_log.worst = frame_log.worst_sent = 0.0;
+            frame_log.last_summary = now;
+        }
+    }
+
+    // The renderer thread, as a display list is sent.
+    void log_sent_frame() {
+        if (frame_log.file == nullptr) {
+            return;
+        }
+        auto now = std::chrono::steady_clock::now();
+        frame_log.sent++;
+        if (frame_log.have_sent) {
+            double ms = ms_between(frame_log.last_sent, now);
+            frame_log.worst_sent = std::max(frame_log.worst_sent, ms);
+            if (ms > 24.0) {
+                std::fprintf(frame_log.file, "%10.1f  to renderer %6.1f ms\n", ms_between(frame_log.start, now), ms);
+            }
+        }
+        frame_log.have_sent = true;
+        frame_log.last_sent = now;
+    }
+}
+
+// The camera is built three times a frame in a match (twice from
+// func_00236854 at the start of the display list, then from func_00220A5C
+// after the sky): only the frame's first takes the mouse motion, so all
+// three build the same view.
+static uint32_t last_camera_head = 0;
+
+void trw::controls::camera_begin() {
+    std::scoped_lock lock(turn_mutex);
+    uint32_t head = *guest_word(dl_head_addr);
+    bool new_frame = dl_buffer_index(head) != dl_buffer_index(last_camera_head) || head < last_camera_head;
+    last_camera_head = head;
+    if (!new_frame) {
+        return;
+    }
+    log_camera_frame();
+    if (look_player == 0 || !valid_object(look_player)) {
+        return;
+    }
+    // The frame's mouse look: all the motion since the last frame.
+    if (turn_pending_x != 0.0f || turn_pending_y != 0.0f) {
+        float scale = (float)recompui::config::general::get_mouse_sensitivity() / 100.0f;
+        turn_player_by(look_player, turn_pending_x * scale, turn_pending_y * scale);
+        turn_pending_x = turn_pending_y = 0.0f;
+    }
+}
+
+void trw::controls::display_list_sent(uint32_t) {
+    std::scoped_lock lock(turn_mutex);
+    log_sent_frame();
 }
 
 uint16_t trw::controls::buttons_held(int port) {
@@ -1276,9 +1460,10 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
                 pick = WeaponPick{};
             }
         }
-        float dx, dy;
-        recompinput::get_mouse_deltas(&dx, &dy); // dropped
+        // The mouse keeps turning the view meanwhile: it sets the angles
+        // itself, apart from the stick the wheel is steered by.
         wheel_cursor_x = wheel_cursor_y = 0.0f;
+        mouse_look(player_index, player, look);
     }
     else if (team_select) {
         if (look) {
@@ -1316,9 +1501,7 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
     }
     else {
         wheel_cursor_x = wheel_cursor_y = 0.0f;
-        if (look) {
-            apply_mouse_look(player_index);
-        }
+        mouse_look(player_index, player, look);
     }
 
     // On the team select a click is held as A for a moment at least (a
