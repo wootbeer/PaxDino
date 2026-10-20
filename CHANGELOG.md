@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.3 Beta] - 2026-10-20
+
+### Changed
+- Medals in Solo Matches also gives the match medals in trials, not just the
+  trial medals
+
+### Fixed
+- Medals in Solo Matches didn't count wins toward the arena medals
+- Crash logs now include which thread crashed and its call stack, for
+  crashes outside the game code
+
 ## [0.1.2 Beta] - 2026-10-17
 
 ### Changed

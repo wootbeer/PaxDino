@@ -232,7 +232,7 @@ void trw::config::add_extra_tabs() {
     enhancements.add_bool_option(
         "bot_match_medals",
         "Medals in Solo Matches",
-        "Earn medals solo.",
+        "Earn medals solo, in bot matches and trials.",
         false
     );
 

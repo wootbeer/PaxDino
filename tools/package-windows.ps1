@@ -7,7 +7,7 @@
 # defaults to x86, which can't link x64):
 #
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-#   .\tools\package-windows.ps1 -Version 0.1.2-beta
+#   .\tools\package-windows.ps1 -Version 0.1.3-beta
 #
 # Output: dist\PaxDino-<version>-windows.zip containing the exe,
 # its DLLs, the assets folder (loaded relative to the working directory, which
@@ -108,3 +108,13 @@ $zip = Join-Path $root "dist\$name.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
 Write-Host "Packaged $zip"
+
+# The exe's symbols, kept beside the zip (not in it): crash logs from this
+# release give host call stack offsets that resolve against it, e.g.
+#   llvm-symbolizer --obj=dist\<name>\PaxDino.exe 0x<offset>
+$pdb = Join-Path $BuildDir "PaxDino.pdb"
+if (Test-Path $pdb) {
+    Copy-Item $pdb (Join-Path $root "dist\$name.pdb")
+    Write-Host "Symbols in dist\$name.pdb (keep it with this release; don't upload it)"
+}
+else { Write-Warning "PaxDino.pdb not found in $BuildDir" }

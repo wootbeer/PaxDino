@@ -5,6 +5,9 @@
 // - the recompiled game function that faulted, by N64 address
 // - for memory faults, the N64 address being accessed
 // - a best-effort list of game functions found on the host stack (callers)
+// - the faulting thread's name and its host call stack, each frame as a
+//   module and offset (for a crash outside game code: the renderer, audio
+//   and so on; the offsets in the exe resolve against that build's symbols)
 // - the faulting game thread's MIPS registers, when a host register still
 //   points at its context, and the player list
 // - N64 memory, to crash_rdram.bin
@@ -15,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cwchar>
 #include <exception>
 #include <string>
 #include <vector>
@@ -24,6 +28,7 @@
 #elif defined(__linux__)
 #include <csignal>
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <pthread.h>
 #include <ucontext.h>
 #include <sys/uio.h>
@@ -50,6 +55,41 @@ namespace {
     // The faulting thread's general host registers, set by the handler.
     uintptr_t host_regs[16];
     int host_reg_count = 0;
+
+    // The faulting thread's name and host call stack, set by the handler.
+    char thread_name[128] = "";
+    constexpr int max_host_frames = 32;
+    uintptr_t host_frames[max_host_frames];
+    int host_frame_count = 0;
+
+    // "module+0xoffset" for a host code address.
+    void describe_host_address(uintptr_t addr, char* out, size_t out_size) {
+        uintptr_t base = 0;
+        const char* name = nullptr;
+#if defined(_WIN32)
+        char path[MAX_PATH] = "";
+        HMODULE module = nullptr;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)addr, &module) &&
+            GetModuleFileNameA(module, path, sizeof(path)) != 0) {
+            base = (uintptr_t)module;
+            const char* slash = strrchr(path, '\\');
+            name = slash != nullptr ? slash + 1 : path;
+        }
+#elif defined(__linux__)
+        Dl_info dl{};
+        if (dladdr((void*)addr, &dl) != 0 && dl.dli_fname != nullptr) {
+            base = (uintptr_t)dl.dli_fbase;
+            const char* slash = strrchr(dl.dli_fname, '/');
+            name = slash != nullptr ? slash + 1 : dl.dli_fname;
+        }
+#endif
+        if (name != nullptr) {
+            snprintf(out, out_size, "%s+0x%" PRIxPTR, name, addr - base);
+        }
+        else {
+            snprintf(out, out_size, "0x%" PRIxPTR, addr);
+        }
+    }
 
     // Whether `size` bytes at `addr` can be read without faulting.
     bool readable(uintptr_t addr, size_t size) {
@@ -188,6 +228,17 @@ namespace {
                 fprintf(out, "%s host address 0x%" PRIxPTR " (outside N64 memory)\n", write ? "Writing" : "Reading", access);
             }
         }
+        if (thread_name[0] != 0) {
+            fprintf(out, "Thread: %s\n", thread_name);
+        }
+        if (host_frame_count > 0) {
+            fprintf(out, "Host call stack (most recent first):\n");
+            for (int i = 0; i < host_frame_count; i++) {
+                char where[512];
+                describe_host_address(host_frames[i], where, sizeof(where));
+                fprintf(out, "  %s\n", where);
+            }
+        }
         report_guest_registers(out);
         report_players(out);
         fprintf(out, "Game functions on the stack (most recent first, best effort):\n");
@@ -311,6 +362,38 @@ namespace {
             for (int i = 0; i < 16; i++) host_regs[i] = (uintptr_t)regs[i];
             host_reg_count = 16;
         }
+        {
+            PWSTR name = nullptr;
+            if (SUCCEEDED(GetThreadDescription(GetCurrentThread(), &name)) && name != nullptr) {
+                WideCharToMultiByte(CP_UTF8, 0, name, -1, thread_name, sizeof(thread_name), nullptr, nullptr);
+                LocalFree(name);
+            }
+        }
+        {
+            // The call stack from the fault, by the x64 unwind data (every
+            // function has it, symbols or not); a leaf function (none) just
+            // returns.
+            CONTEXT c = *info->ContextRecord;
+            for (host_frame_count = 0; host_frame_count < max_host_frames && c.Rip != 0; host_frame_count++) {
+                host_frames[host_frame_count] = (uintptr_t)c.Rip;
+                DWORD64 image_base = 0;
+                PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(c.Rip, &image_base, nullptr);
+                if (fn != nullptr) {
+                    PVOID handler_data = nullptr;
+                    DWORD64 frame = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, c.Rip, fn, &c, &handler_data, &frame, nullptr);
+                }
+                else {
+                    if (!readable((uintptr_t)c.Rsp, sizeof(DWORD64))) break;
+                    c.Rip = *reinterpret_cast<const DWORD64*>(c.Rsp);
+                    c.Rsp += sizeof(DWORD64);
+                }
+                if (!readable((uintptr_t)c.Rsp, sizeof(DWORD64))) {
+                    host_frame_count++;
+                    break;
+                }
+            }
+        }
         uintptr_t pc = (uintptr_t)rec->ExceptionAddress;
         HMODULE module = nullptr;
         GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)pc, &module);
@@ -353,6 +436,21 @@ namespace {
             host_reg_count = 16;
         }
 #endif
+        pthread_getname_np(pthread_self(), thread_name, sizeof(thread_name));
+        {
+            // From the handler: its own frames and the signal trampoline come
+            // first, then the faulting frame (the pc) and its callers.
+            void* frames[max_host_frames + 8];
+            int n = backtrace(frames, max_host_frames + 8);
+            int first = 0;
+            for (int i = 0; i < n; i++) {
+                if ((uintptr_t)frames[i] == pc) { first = i; break; }
+            }
+            host_frame_count = 0;
+            for (int i = first; i < n && host_frame_count < max_host_frames; i++) {
+                host_frames[host_frame_count++] = (uintptr_t)frames[i];
+            }
+        }
         const char* what = sig == SIGSEGV ? "segmentation fault" : sig == SIGBUS ? "bus error" : sig == SIGILL ? "illegal instruction" : "floating point exception";
         if (is_shutdown_fault(sig == SIGSEGV || sig == SIGBUS, (uintptr_t)info->si_addr)) {
             _exit(0);

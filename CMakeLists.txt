@@ -41,6 +41,16 @@ foreach (prefix IN ITEMS "${CMAKE_SOURCE_DIR}" "${TRW_SOURCE_DIR_NATIVE}")
     endif()
 endforeach()
 
+# Windows Release builds: line tables in PaxDino.pdb beside the exe, so the
+# crash log's host call stack (src/main/crash_handler.cpp) resolves for a
+# release kept with its .pdb (tools/package-windows.ps1 keeps it in dist\,
+# outside the zip). Not for the recompiled game code (RecompiledFuncs): the
+# log names those functions itself.
+if (MSVC)
+    # /Z7 with clang's line tables only (clang-cl has no /Zd).
+    add_compile_options($<$<CONFIG:Release>:/Z7> $<$<CONFIG:Release>:/clang:-gline-tables-only>)
+endif()
+
 # Opt out of constexpr mutex constructor on windows to prevent vcredist issues
 if (WIN32)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR")
@@ -98,6 +108,9 @@ target_compile_options(RecompiledFuncs PRIVATE
     # Declarations for the [[patches.hook]] text in turokrw.us.toml.
     ${TRW_RECOMP_HOOKS_FORCE_INCLUDE}
 )
+if (MSVC)
+    target_compile_options(RecompiledFuncs PRIVATE $<$<CONFIG:Release>:/clang:-g0>)
+endif()
 
 target_include_directories(RecompiledFuncs PRIVATE
     ${CMAKE_SOURCE_DIR}/include
@@ -197,6 +210,10 @@ endif()
 if (MSVC)
     # Disable identical code folding, since this breaks mod function patching as multiple functions can get merged into one.
     target_link_options(PaxDino PRIVATE /OPT:NOICF)
+    # The .pdb for Release (see /Z7 above). /DEBUG would turn off /OPT:REF,
+    # so it's kept; only the .pdb's file name goes into the exe, not the
+    # build machine's folder.
+    target_link_options(PaxDino PRIVATE $<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/PDBALTPATH:PaxDino.pdb>)
 endif()
 
 if (WIN32)

@@ -270,7 +270,7 @@ func = "func_004244B4"
 vram = 0x004244C8
 value = 0x2402FFFF  # addiu $v0, $zero, -1 (was 0xA)
 
-# Enhancements tab: Medals in Bot Matches. Medals are awarded at the end of a
+# Enhancements tab: Medals in Solo Matches. Medals are awarded at the end of a
 # match (func_004245C0) only if func_00426454 counts two or more human
 # players who took part (a per-port count at 0x800FD140 of at least 76, kept
 # by func_0021A9A4; bots don't count; a3 here). While the option is on, one
@@ -279,6 +279,37 @@ value = 0x2402FFFF  # addiu $v0, $zero, -1 (was 0xA)
 func = "func_00426454"
 before_vram = 0x004264D0
 text = "    if (trw_option(11) && (int32_t)ctx->r7 >= 1) ctx->r7 = 2;"
+
+# The same for the arena medals: at a match's end func_00424E30 counts a win
+# for the winner on the arena (0x8014BD9C) toward that arena's medal (given
+# by func_004245C0 at two), only if the match had a frag or time limit of 10
+# or more and its own count of humans who fired 76 shots (t1 here) is two or
+# more. While Medals in Solo Matches is on, one will do.
+[[patches.hook]]
+func = "func_00424E30"
+before_vram = 0x00424F2C
+text = "    if (trw_option(11) && (int32_t)ctx->r9 >= 1) ctx->r9 = 2;"
+
+# Medals in Solo Matches, in trials too. The match medals (func_004245C0:
+# each medal's task, then its bit set) are only given at the end of a
+# multiplayer match (func_0042BD40, mode 0 at 0x80140215). A trial (modes 1
+# to 4, its tier) won runs func_00425EF4 instead (from func_00437C30, or
+# func_0042BD40 for co-op), which marks the trial done for the player in a0.
+# With the option on, the player also gets the match medals there: a1 is the
+# two words func_004245C0 fills with the medals given (the results screen's
+# in a multiplayer match), here a scratch space on the stack.
+[[patches.hook]]
+func = "func_00425EF4"
+before_vram = 0x00425EF4
+text = "    if (trw_option(11)) { gpr a0 = ctx->r4, ra = ctx->r31; ctx->r29 = ADD32(ctx->r29, -0x10); ctx->r5 = ctx->r29; func_004245C0(rdram, ctx); ctx->r29 = ADD32(ctx->r29, 0x10); ctx->r4 = a0; ctx->r31 = ra; }"
+
+# The match medals' first check (func_00426454) wants two or more human
+# players who fired 76 shots or more, so idle controllers don't count. A
+# trial has one: with Medals in Solo Matches on, it passes in a trial.
+[[patches.hook]]
+func = "func_004245C0"
+before_vram = 0x00424604
+text = "    if (trw_option(11) && MEM_BU(0, (gpr)(int32_t)0x80140215) != 0) ctx->r2 = 1;"
 
 # Enhancements tab: Demo When Idle. The title screen's update (func_002A1FD0)
 # starts the attract demo (func_0042E080) once its idle timer at 0x800CD940

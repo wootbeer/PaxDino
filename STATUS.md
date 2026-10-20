@@ -5,6 +5,69 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-10-20, round 125: crash logs for crashes outside game code
+
+Issue 7, a second report (Windows 11, RTX 5070 Ti): an access violation in
+VCRUNTIME140.dll (memcpy) writing host address 0x20, not in game code, no
+game functions on the stack. Not enough to say where: the log only named
+recompiled functions. crash_handler.cpp now also writes the faulting
+thread's name (the runtime and RT64 name theirs: "Gfx Thread", "VI Thread",
+RT64's queues) and its host call stack, each frame as module+offset:
+Windows unwinds from the fault with the x64 unwind data
+(RtlLookupFunctionEntry / RtlVirtualUnwind, there with or without symbols),
+Linux takes backtrace() from the faulting frame on. Windows Release builds
+now write line tables to PaxDino.pdb (/Z7 with -gline-tables-only;
+clang-cl has no /Zd; not RecompiledFuncs, -g0), with
+/OPT:REF kept and /PDBALTPATH so only the file name goes into the exe;
+tools/package-windows.ps1 keeps the .pdb in dist\ beside the zip, not in
+it (it has the build machine's paths), for resolving a release's offsets.
+Checked on Linux (SIGSEGV sent to the game): the log shows the thread and
+eight frames, and addr2line resolves the exe's offsets (main,
+recomp::start, ultramodern::sleep_milliseconds). The Windows path is not
+built here.
+
+## 2026-10-18, round 124: trial medals under Medals in Solo Matches
+
+Of func_004245C0's medals, 0x00-0x23 are the arena medals (two wins counted
+by func_00424E30, not run in trials) and 0x24-0x2C are judged from the
+match's own stats (several tied to its frag limit or time, which trials
+don't set per trial), so trials gain at most those nine. Too few for an
+option of their own: Medals in Trials (option 17) is gone and its two hooks
+go with Medals in Solo Matches (option 11), described as bot matches and
+trials. Checked again: a trial won with only Medals in Solo Matches on gave
+medal 5 (counter set to 2), then the trial's own bits.
+
+## 2026-10-18, round 123: medals in trials; arena medals in solo matches
+
+Checked Medals in Solo Matches (round 59): its hook in func_00426454 (one
+human who fired 76 shots or more counts as two) is in the generated code
+where it should be. But the arena medals have their own check: at a
+multiplayer match's end (func_0042BD40, mode 0 at 0x80140215),
+func_00424E30 counts a win for the winner on the arena (0x8014BD9C) in the
+counters at 0x800FCB26 (0x190 a player, capped at 5), only with a frag or
+time limit of 10 or more and two or more humans who fired 76 shots, its own
+count (t1). func_004245C0's first loop gives an arena's medal (bits at
+0x800FCB4A) at two. So solo, those never counted. Hook at 0x00424F2C: one
+will do with the option on. Checked with gdb in a bot match (shot count set
+to 100, func_00424E30 called for slot 0 on arena 18): the counter goes 0 to
+1 with the option on, stays 0 with it off.
+
+Medals in Trials (Enhancements, option 17; folded into Medals in Solo
+Matches in round 124). A trial (modes 1 to 4 at
+0x80140215, its tier) never reaches the match medals: a single trial won
+runs func_00425EF4 from its results (func_00437C30, three places), which
+sets the trial's done bit; co-op trials (func_0042BD40, mode 2) run
+func_0042D3A8 for the trial medals, then func_00425EF4 for each human. A
+failed trial runs neither. Hook at func_00425EF4's start: with the option on,
+the player also gets func_004245C0 (a0 the slot, a1 a scratch on the stack
+for the two medal ids it reports), and a second hook makes its first check
+(func_00426454: limits, two humans) pass in a trial. Arena wins aren't
+counted in trials (0x8014BD9C is the trial's number there, not an arena),
+so the medals from that match's own stats are the ones earnable. Checked:
+won Proving Grounds (Infinite Health, held fire): func_00425EF4, then
+func_004245C0 for slot 0; with medal 5's counter set to 2 before the win,
+its bit (0x800FCB4A bit 5) was set, then the trial's own bits.
+
 ## 2026-10-17, round 122: the renderer's camera turn removed
 
 Reported after round 121: the walls still blurred while turning, and much
