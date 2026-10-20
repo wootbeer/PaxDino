@@ -56,6 +56,9 @@ void trw_camera_begin(uint8_t* rdram);
 // src/game/extras.cpp: the frame step (float bits), for 60 frames a second
 // in matches.
 uint32_t trw_frame_step(uint8_t* rdram, uint32_t step_bits);
+// src/game/extras.cpp: game frames to one of the game's own 30 a second (2
+// at 60 frames a second, else 1), for timers it counts in frames.
+int trw_frames_scale(uint8_t* rdram);
 
 // src/main/custom_music.cpp: a song starts on the music player `seqp`; the
 // volume to give a sequence player (0 while a file replaces its song); a

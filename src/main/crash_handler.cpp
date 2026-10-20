@@ -13,6 +13,7 @@
 // - N64 memory, to crash_rdram.bin
 // Release builds have no console, so a message box points testers at the log.
 #include <algorithm>
+#include <atomic>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -422,6 +423,12 @@ namespace {
     }
 #elif defined(__linux__)
     void signal_handler(int sig, siginfo_t* info, void* uctx_void) {
+        // One report: another thread faulting meanwhile waits here until the
+        // first is written and the process ends.
+        static std::atomic_flag entered = ATOMIC_FLAG_INIT;
+        if (entered.test_and_set()) {
+            for (;;) pause();
+        }
         ucontext_t* uctx = static_cast<ucontext_t*>(uctx_void);
 #if defined(__x86_64__)
         uintptr_t pc = (uintptr_t)uctx->uc_mcontext.gregs[REG_RIP];

@@ -10,6 +10,10 @@
 - Medals in Solo Matches didn't count wins toward the arena medals
 - Crash logs now include which thread crashed and its call stack, for
   crashes outside the game code
+- Bastille's shield came back twice as fast with the Framerate above
+  Original
+- Frag Tag's tag switch timer ran twice as fast with the Framerate above
+  Original
 
 ## [0.1.2 Beta] - 2026-10-17
 

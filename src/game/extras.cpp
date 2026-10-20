@@ -349,6 +349,12 @@ extern "C" uint32_t trw_frame_step(uint8_t* rdram, uint32_t step_bits) {
     return step_bits;
 }
 
+// Game frames to one of the game's own (30 a second): 2 while matches run at
+// 60, for timers the game counts in frames (turokrw.us.toml).
+extern "C" int trw_frames_scale(uint8_t*) {
+    return fps60_active ? 2 : 1;
+}
+
 // From the frame start (trw_frame_buffers_set, src/game/widescreen.cpp).
 extern "C" void trw_apply_extras(uint8_t* rdram) {
     fps60_active = trw::config::get_high_framerate() && in_match(rdram);

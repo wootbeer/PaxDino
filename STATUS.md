@@ -5,6 +5,31 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-10-20, round 126: timers counted in frames at 60
+
+Issue 11: Bastille's shield (Cathedral) came back far sooner at high
+framerates, over twice as long at Original. The matches at 60 (round 103)
+run the game's logic twice as often, which the frame step covers, but not
+timers the game counts in frames. The ROM keeps the game's type info
+(member names and offsets, around 0x132FB8): CGameStatus_t, at 0x801407E0
+(0x80140888 being m_bScenarioSuccess, the trial won flag from round 123,
+checks it), has m_bIsBossLevel +0x98, m_nTalsetLives +0x9C,
+m_nBastilleShield +0xA0 and m_nBastilleTimer +0xA4. A hit on character 0xB
+(+0x80 of its character data) takes the shield down (func_0021BFBC); when
+it's gone the timer is set to 75 frames (easy) or 60, and func_00208158
+counts it down by one a frame (0x00208330) before the shield is back at
+100. Scanned the struct's fields for other one-a-frame counts: Frag Tag's
+flip timer (m_FragTagFlipTimer +0x68, set to 225 in func_00227014 and
+counted down there) is the other one. trw_frames_scale()
+(src/game/extras.cpp) is 2 while matches run at 60, and both timers are
+scaled by it as they're set. The logic never runs above 60 (one retrace a
+frame), so higher refresh rates are covered. Checked: 2 in a match at 60,
+the hooks in the generated code after the timer's label (every difficulty's
+value goes through it). Not played to Bastille here.
+
+The Linux crash handler now writes one report when several threads fault
+at once (seen in the sandbox: llvmpipe's threads), like the Windows one.
+
 ## 2026-10-20, round 125: crash logs for crashes outside game code
 
 Issue 7, a second report (Windows 11, RTX 5070 Ti): an access violation in

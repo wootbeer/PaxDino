@@ -328,6 +328,26 @@ func = "func_00292818"
 before_vram = 0x00292CA4
 text = "    { uint32_t b = trw_frame_step(rdram, ctx->f0.u32l); ctx->f0.u32l = b; }"
 
+# Bastille's shield (Cathedral, the boss level flag at 0x80140878, the
+# character id 0xB at +0x80 of the player's character data): hits take it
+# down (func_0021BFBC here), and when it's gone a recharge timer at
+# 0x80140884 is set to 75 frames (easy) or 60, which func_00208158 counts
+# down by one each frame (0x00208330) before the shield is back at 100. In
+# frames of 30 a second: at 60 the recharge came twice as fast. Scaled by
+# the frames per game frame (src/game/extras.cpp).
+[[patches.hook]]
+func = "func_0021BFBC"
+before_vram = 0x0021C1AC
+text = "    ctx->r2 = ADD32(0, (int32_t)ctx->r2 * trw_frames_scale(rdram));"
+
+# The same for Frag Tag's flip timer (0x80140848): set to 225 frames (7.5
+# seconds at 30) and counted down by one each frame (0x00227B20), both in
+# func_00227014.
+[[patches.hook]]
+func = "func_00227014"
+before_vram = 0x002271C4
+text = "    ctx->r2 = ADD32(0, (int32_t)ctx->r2 * trw_frames_scale(rdram));"
+
 # The game's camera starts (func_00234FCC): mouse look waits until its
 # perspective call below, so the camera and the frame's tag for the view
 # turning (lib-patches/rt64/0008) have one angle (src/main/fps_controls.cpp).
