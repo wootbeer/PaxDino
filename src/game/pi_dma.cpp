@@ -6,7 +6,8 @@
 // the PI interrupt message it registered with
 // osSetEventMesg(OS_EVENT_PI, ...) (at 0x0025626C). The runtime only has a
 // stub for osPiRawStartDma and doesn't track OS_EVENT_PI, so both are done
-// here: the DMA happens at once, then the PI event message is posted.
+// here: the DMA happens at once, then the PI event message is posted, at
+// once too.
 #include <atomic>
 #include <cstdio>
 
@@ -41,9 +42,15 @@ extern "C" void trw_osPiRawStartDma(uint8_t* rdram, recomp_context* ctx) {
         recomp::do_rom_read(rdram, dram_addr, physical_addr, size);
     }
 
+    // Posted at once, from this (the DMA) thread, as a game thread would. As
+    // an external message it came later, through the runtime's own thread:
+    // the DMA thread blocked waiting for it, lower threads ran meanwhile, and
+    // quitting a match could free buffers whose requests were already queued
+    // behind it; their DMA then wrote over memory given to something else
+    // (issue 7: crashes after quitting and restarting matches).
     int32_t mq = pi_event_mq;
     if (mq != 0) {
-        ultramodern::enqueue_external_message_src(mq, pi_event_msg, false, ultramodern::EventMessageSource::Pi);
+        osSendMesg(rdram, mq, pi_event_msg, OS_MESG_NOBLOCK);
     }
     ctx->r2 = 0;
 }

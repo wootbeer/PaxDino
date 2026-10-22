@@ -7,7 +7,7 @@
 # defaults to x86, which can't link x64):
 #
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-#   .\tools\package-windows.ps1 -Version 0.1.3-beta
+#   .\tools\package-windows.ps1 -Version 0.1.4-beta
 #
 # Output: dist\PaxDino-<version>-windows.zip containing the exe,
 # its DLLs, the assets folder (loaded relative to the working directory, which

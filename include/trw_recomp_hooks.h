@@ -59,6 +59,10 @@ uint32_t trw_frame_step(uint8_t* rdram, uint32_t step_bits);
 // src/game/extras.cpp: game frames to one of the game's own 30 a second (2
 // at 60 frames a second, else 1), for timers it counts in frames.
 int trw_frames_scale(uint8_t* rdram);
+// src/game/extras.cpp: whether the screen wipe `wipe` moves on this frame.
+int trw_wipe_tick(uint8_t* rdram, uint32_t wipe);
+// src/game/extras.cpp: a match setup's list check (func_0044C100).
+void trw_check_match_list(uint8_t* rdram, uint32_t list);
 
 // src/main/custom_music.cpp: a song starts on the music player `seqp`; the
 // volume to give a sequence player (0 while a file replaces its song); a

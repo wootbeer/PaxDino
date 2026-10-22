@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.1.4 Beta] - 2026-10-22
+
+### Fixed
+- The red transition at the end of a trial played twice as fast with the
+  Framerate above Original
+- The game could crash on purpose when a frame took more than 20 seconds
+  (a leftover hang check from the console)
+- A crash after quitting and restarting matches several times
+
 ## [0.1.3 Beta] - 2026-10-20
 
 ### Changed

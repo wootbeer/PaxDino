@@ -5,6 +5,53 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-10-22, round 129: a stale list at match setup
+
+Issue 7 again (crash a few matches after quitting and restarting). In the
+sandbox it reproduced on the first or second restart as func_00255E78
+(list unlink) reading a wild address, called from func_0044C100 (match
+setup). Setup frees the elements of the list at s2+0x1B500 (0x801352C8:
+head, tail, prev offset, next offset, count) after func_0028D4EC; on the
+crashing runs the list's head block had already been freed and reused, so
+its links were garbage, and the walk either faulted or freed the block a
+second time, corrupting the heap (the reporter's crash in the allocator,
+func_002559D4, matches that). The PI change from round 128's chase
+(osSendMesg for the PI event) did not change it.
+
+trw_check_match_list (src/game/extras.cpp), hooked before 0x0044C220,
+walks the list first: every element must be RDRAM, each back link must
+match, the walk must end at the tail. If not, the memory is already gone,
+so the list is emptied (head, tail, count) and setup skips the walk and
+the second free. A whole list is left alone. The free after the walk
+(func_00254778, which reads the block header at -0x10) is then given 0 and
+crashed reading 0xFFFFFFF0 in the first test, so it now returns on 0. It logs
+"[TRW] match list ... emptied" when it fires.
+
+## 2026-10-22, round 128: the console's hang check
+
+Chasing issue 7 (crashes quitting and restarting matches) in the sandbox,
+one crash was func_0028E9DC writing N64 address 0 (reported as reading
+0x3): the scheduler's retrace handler counts 0x800CD610 up each retrace,
+the graphics task done handler resets it (0x0028EE38), and at 0x4B0 (1200
+retraces, 20 seconds without a finished frame) it stores to address 0 on
+purpose (0x0028EBF0, sb $zero, 0($zero)). Here gdb and the software
+renderer stall that long; on a PC a long stall, a minimized window or a
+debugger can too. The store is now a nop (turokrw.us.toml). The same crash
+came earlier from keys pressed while the game was still starting.
+
+## 2026-10-21, round 127: the screen wipe at 60
+
+Reported (a website comment): the red transition at the end of a single
+player stage is far too fast. The type info has CWipeScreen_t (+0x00 id,
++0x04/+0x08/+0x0C colour, +0x10 step, +0x14 count, +0x18 state) and
+WIPE_MAX_FRAMES. func_0043C458 starts a wipe (step 1, count 0, state 1)
+and func_0043C484 adds the step each frame, done at 13: 13 frames of 30 a
+second. A trial ends while the match still runs at 60. Hook at
+func_0043C484's start: while trw_frames_scale() is 2, a wipe moves on every
+other call (kept per wipe, src/game/extras.cpp trw_wipe_tick). Checked:
+won Proving Grounds, the wipe at 0x8066CE60 took 26 calls, each count
+twice.
+
 ## 2026-10-20, round 126: timers counted in frames at 60
 
 Issue 11: Bastille's shield (Cathedral) came back far sooner at high

@@ -348,6 +348,43 @@ func = "func_00227014"
 before_vram = 0x002271C4
 text = "    ctx->r2 = ADD32(0, (int32_t)ctx->r2 * trw_frames_scale(rdram));"
 
+# The screen wipe (CWipeScreen_t: colour, then +0x10 step, +0x14 count,
+# +0x18 state), as when a trial ends: started by func_0043C458, moved on
+# each frame by func_0043C484 until the count reaches 13 (WIPE_MAX_FRAMES).
+# Frames of 30 a second: at 60, it moves on every other frame.
+[[patches.hook]]
+func = "func_0043C484"
+before_vram = 0x0043C484
+text = "    if (!trw_wipe_tick(rdram, (uint32_t)ctx->r4)) return;"
+
+# The scheduler's hang check (func_0028E9DC): each retrace counts up
+# 0x800CD610, which a finished graphics task resets (0x0028EE38); at 1200
+# (20 seconds without a frame) it crashes on purpose, a store to address 0.
+# On a PC a frame can take that long without anything being wrong (a long
+# stall, the window minimized, a debugger), so the store is a nop.
+[[patches.instruction]]
+func = "func_0028E9DC"
+vram = 0x0028EBF0
+value = 0x00000000  # nop (was sb $zero, 0x0($zero))
+
+# A match's setup (func_0044C100, s2 its state) takes the last match's
+# list at s2 + 0x1B500 (0x801352C8) apart: unlinks each element, then frees
+# the head's block. Quitting and starting again sometimes left the list in
+# memory already freed and loaded over (issue 7), and this crashed. It's
+# checked first and emptied if it isn't whole (src/game/extras.cpp), and the head's block, already gone,
+# isn't freed again.
+[[patches.hook]]
+func = "func_0044C100"
+before_vram = 0x0044C220
+text = "    trw_check_match_list(rdram, (uint32_t)ctx->r18 + 0x1B500);"
+
+# The free behind it (func_00254778) reads the block's header at -0x10, so
+# with the list emptied above it would be given 0; nothing to free then.
+[[patches.hook]]
+func = "func_00254778"
+before_vram = 0x00254778
+text = "    if (ctx->r4 == 0) return;"
+
 # The game's camera starts (func_00234FCC): mouse look waits until its
 # perspective call below, so the camera and the frame's tag for the view
 # turning (lib-patches/rt64/0008) have one angle (src/main/fps_controls.cpp).

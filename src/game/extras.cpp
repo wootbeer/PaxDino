@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 #include "recomp.h"
 #include "trw_config.h"
@@ -353,6 +355,56 @@ extern "C" uint32_t trw_frame_step(uint8_t* rdram, uint32_t step_bits) {
 // 60, for timers the game counts in frames (turokrw.us.toml).
 extern "C" int trw_frames_scale(uint8_t*) {
     return fps60_active ? 2 : 1;
+}
+
+// A screen wipe's frame (func_0043C484, turokrw.us.toml): whether it moves
+// on this frame. It's 13 frames of the game's 30 a second; at 60, every
+// other frame, by the wipe (more than one can run).
+extern "C" int trw_wipe_tick(uint8_t* rdram, uint32_t wipe) {
+    static std::unordered_map<uint32_t, bool> skipped;
+    if (trw_frames_scale(rdram) == 1) {
+        skipped.clear();
+        return 1;
+    }
+    bool& skip = skipped[wipe];
+    skip = !skip;
+    return skip ? 0 : 1;
+}
+
+// Before a match's setup (func_0044C100) takes down the last match's list at
+// `list` (head, tail, the previous and next links' offsets, count): whether
+// it's still whole. Quitting and starting matches again sometimes left it
+// pointing into memory already freed and loaded over (issue 7); walking it
+// then crashed, and freeing its head again would break the heap. A list
+// that isn't whole is emptied, so the walk and the free are skipped.
+extern "C" void trw_check_match_list(uint8_t* rdram, uint32_t list) {
+    auto valid = [](uint32_t a) { return a >= 0x80000400u && a < 0x80800000u && (a & 3) == 0; };
+    uint32_t head = (uint32_t)MEM_W(0, (gpr)(int32_t)list);
+    if (head == 0) {
+        return;
+    }
+    uint32_t tail = (uint32_t)MEM_W(4, (gpr)(int32_t)list);
+    uint32_t prev_off = (uint32_t)MEM_W(8, (gpr)(int32_t)list);
+    uint32_t next_off = (uint32_t)MEM_W(12, (gpr)(int32_t)list);
+    bool whole = prev_off < 0x1000 && next_off < 0x1000;
+    uint32_t prev = 0;
+    uint32_t node = head;
+    for (int n = 0; whole && node != 0; n++) {
+        if (n > 4096 || !valid(node) || !valid(node + next_off) ||
+            (uint32_t)MEM_W(0, (gpr)(int32_t)(node + prev_off)) != prev) {
+            whole = false;
+            break;
+        }
+        prev = node;
+        node = (uint32_t)MEM_W(0, (gpr)(int32_t)(node + next_off));
+    }
+    if (whole && prev == tail) {
+        return;
+    }
+    fprintf(stderr, "[TRW] match list at 0x%08X no longer whole (head 0x%08X); emptied\n", list, head);
+    MEM_W(0, (gpr)(int32_t)list) = 0;
+    MEM_W(4, (gpr)(int32_t)list) = 0;
+    MEM_W(16, (gpr)(int32_t)list) = 0;
 }
 
 // From the frame start (trw_frame_buffers_set, src/game/widescreen.cpp).
