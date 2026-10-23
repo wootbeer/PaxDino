@@ -119,9 +119,9 @@ it next to the exe, so run it from the build folder or the repo root.
 
 ## Release packages
 
-- **Windows:** `.\tools\package-windows.ps1 -Version 0.1.4-beta` gives
+- **Windows:** `.\tools\package-windows.ps1 -Version 0.1.5-beta` gives
   `dist\PaxDino-<version>-windows.zip`.
-- **Linux / Steam Deck:** `tools/package-linux.sh 0.1.4-beta` gives
+- **Linux / Steam Deck:** `tools/package-linux.sh 0.1.5-beta` gives
   `dist/PaxDino-<version>-linux.tar.gz` with an AppImage. It runs on systems
   with a glibc at least as new as the one it's built on, so build it on an
   older distro (or SteamOS's) for the widest reach.

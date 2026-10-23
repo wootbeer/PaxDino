@@ -35,6 +35,8 @@
 #include "recomp.h"
 #include "trw_config.h"
 
+extern "C" int trw_player_live(uint8_t* rdram, uint32_t player); // src/game/extras.cpp
+
 namespace {
     using trw::config::WeaponRule;
 
@@ -277,7 +279,7 @@ void trw_apply_weapon_rules(uint8_t* rdram, bool in_match) {
     for (int port = 0; port < kPlayers; port++) {
         uint32_t player = first + port * kPlayerStride;
         gpr p = (gpr)(int32_t)player;
-        if (MEM_W(kPlayerActive, p) == 0) {
+        if (!trw_player_live(rdram, player) || MEM_W(kPlayerActive, p) == 0) {
             continue;
         }
         if (port < 4) {

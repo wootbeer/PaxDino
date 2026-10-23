@@ -49,6 +49,7 @@ uint8_t* trw::controls::rdram = nullptr;
 
 extern "C" int trw_on_title_screen(void);
 extern "C" int trw_match_hud_drawn(void);
+extern "C" int trw_player_live(uint8_t* rdram, uint32_t player); // src/game/extras.cpp
 extern "C" int trw_pause_resume_direction(void);
 
 namespace {
@@ -125,7 +126,7 @@ namespace {
     // The player object on controller port `port`, or 0. The players (and
     // bots) are also in a row, 0x16E8 apart, port n the n-th: the list
     // through +0x16E0 needn't reach the second player.
-    uint32_t player_on_port(int port) {
+    uint32_t player_slot_on_port(int port) {
         uint32_t first = *guest_word(player_pointer_addr);
         uint32_t slot = first + (uint32_t)port * 0x16E8u;
         if (port >= 0 && port < 4 && valid_object(first) && valid_object(slot) &&
@@ -140,6 +141,13 @@ namespace {
             player = *guest_word(player + player_next_offset);
         }
         return 0;
+    }
+
+    // Only a player in the match now: the first player's pointer is left as
+    // it was when a match is quit (trw_player_live).
+    uint32_t player_on_port(int port) {
+        uint32_t player = player_slot_on_port(port);
+        return player != 0 && trw_player_live(trw::controls::rdram, player) ? player : 0;
     }
 
     // The weapon wheel (player + 0x938, through its pending choice at

@@ -5,6 +5,29 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-10-23, round 130: our own writes to players already gone
+
+Issue 7 on 0.1.4: a crash in the free (func_00255ACC) in play, no "match
+list emptied" in the log, so round 129 only covered one symptom. Tracing the
+broken list here: its 6th element's back link held 0x00FF00FF, and a
+watchpoint caught the writer, trw_apply_weapon_rules (Loadout Restrictions,
+on in this sandbox as Bullet) writing a player's loadout bytes (0 and 0xFF
+pairs). The player manager at 0x8013EF80 keeps the match's players in a list
+at +0x20 (head; tail +0x24; count +0x30; linked through +0x16E0), but its +4
+(0x8013EF84, the first player, which everything here used) is left as it was
+when a match is quit. While the next match loads, that memory goes to other
+things, and the player's +0x5D0 can still read nonzero. Everything that
+writes to players through it does so then: Loadout Restrictions, the cheats
+(health, moon jump, rapid fire), the look spring override, the mouse's turn,
+and the weapon wheel held while paused (0x380 bytes written back each frame,
+and quitting or restarting is done from the pause list, so that one is the
+likely cause with nothing turned on).
+
+trw_player_live (src/game/extras.cpp): a player is written only if it's in
+the list at 0x8013EFA0. player_on_port (src/main/fps_controls.cpp), the
+cheats, the look spring and Loadout Restrictions check it. Round 129's check
+stays as a guard.
+
 ## 2026-10-22, round 129: a stale list at match setup
 
 Issue 7 again (crash a few matches after quitting and restarting). In the

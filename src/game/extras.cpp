@@ -96,6 +96,27 @@ namespace {
     bool valid_player(uint32_t player) {
         return player >= 0x80000400u && player < 0x80800000u && (player & 3) == 0;
     }
+}
+
+// Whether `player` is one of the match's players now. The player manager
+// (0x8013EF80) keeps them in a list at +0x20 (head; count at +0x30), linked
+// through +0x16E0; its +4 (0x8013EF84, the first player, the others 0x16E8
+// after it) is left as it was when a match is quit, and while the next one
+// loads that memory is given to other things. Writing a player there (the
+// mouse's turn, the cheats, Loadout Restrictions) wrote over them (issue 7:
+// crashes after quitting and restarting matches).
+extern "C" int trw_player_live(uint8_t* rdram, uint32_t player) {
+    uint32_t node = (uint32_t)MEM_W(0, (gpr)(int32_t)0x8013EFA0);
+    for (int i = 0; i < 8 && valid_player(node); i++) {
+        if (node == player) {
+            return 1;
+        }
+        node = (uint32_t)MEM_W(0x16E0, (gpr)(int32_t)node);
+    }
+    return 0;
+}
+
+namespace {
 
     // Look Spring Override (Controls tab, one per player): look spring off for
     // the players it's on for. The game's own setting is byte +0x7D of a player's
@@ -117,7 +138,8 @@ namespace {
             gpr player = (gpr)(int32_t)(first + port * 0x16E8u);
             uint32_t settings = (uint32_t)MEM_W(0x5D8, player);
             // (0x96 apart, so not word-aligned past player 1's.)
-            if (MEM_W(0x5D0, player) == 0 || settings < 0x80000400u || settings >= 0x80800000u) {
+            if (!trw_player_live(rdram, first + port * 0x16E8u) || MEM_W(0x5D0, player) == 0 ||
+                settings < 0x80000400u || settings >= 0x80800000u) {
                 continue;
             }
             gpr spring = (gpr)(int32_t)settings;
@@ -206,7 +228,7 @@ namespace {
         for (int i = 0; i < 4 && valid_player(first); i++) {
             gpr p = (gpr)(int32_t)(first + i * 0x16E8u);
             int32_t port = MEM_W(kPlayerPort, p);
-            if (port == i && MEM_W(0x5D0, p) != 0) {
+            if (port == i && trw_player_live(rdram, first + i * 0x16E8u) && MEM_W(0x5D0, p) != 0) {
                 uint16_t buttons = trw::controls::buttons_held(port);
                 if (health && MEM_HU(kPlayerHealth, p) < kFullHealth) {
                     MEM_H(kPlayerHealth, p) = (int16_t)kFullHealth;

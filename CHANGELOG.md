@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.5 Beta] - 2026-10-23
+
+### Fixed
+- Another crash after quitting and restarting matches: the game's memory
+  was written to through the last match's players
+
 ## [0.1.4 Beta] - 2026-10-22
 
 ### Fixed
