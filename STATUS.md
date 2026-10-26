@@ -5,6 +5,21 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-10-26, round 131: mouse look's kept player
+
+Issue 7 on 0.1.5: the same crash as the reporter's 0.1.3 one, the allocator
+(func_002559D4, 0xF00 bytes for func_0044A4E0 as the next match loads)
+reading a free block's +0x10/+0x14 as a small positive float (about 0.0035,
+0.007 in the earlier log). A float written into freed memory. Mouse look
+keeps its player from the last controller read (look_player) and turns it
+when the camera is built (camera_begin), with no check that it's still in
+the match, so after quitting it could write the old player's yaw and pitch
+(+0x6C, +0x724; pitch near 0 looking level) while the next match loaded.
+camera_begin now drops the turn unless the match is on and the player is in
+the list (trw_player_live). Not reproduced here: 8 restarts with the mouse
+moving through play and each quit, no crash, and the check never had a
+stale turn to drop. Mouse look still turns in play.
+
 ## 2026-10-23, round 130: our own writes to players already gone
 
 Issue 7 on 0.1.4: a crash in the free (func_00255ACC) in play, no "match

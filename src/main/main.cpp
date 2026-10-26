@@ -86,7 +86,7 @@ namespace trw {
 
 static const std::string program_name = "PaxDino: Rage Wars Recomp";
 static const std::u8string program_id = u8"trwrecomp";
-static const std::string version_string = "0.1.5";
+static const std::string version_string = "0.1.6";
 
 template <typename... Ts>
 [[noreturn]] static void exit_error(const char* fmt, Ts... args) {

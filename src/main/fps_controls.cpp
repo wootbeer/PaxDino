@@ -1143,7 +1143,11 @@ void trw::controls::camera_begin() {
         return;
     }
     log_camera_frame();
-    if (look_player == 0 || !valid_object(look_player)) {
+    // The player kept from the last controller read may be the last match's,
+    // gone since it was quit (the camera is built while the next one loads).
+    if (look_player == 0 || !valid_object(look_player) || !match_live() ||
+        !trw_player_live(trw::controls::rdram, look_player)) {
+        turn_pending_x = turn_pending_y = 0.0f;
         return;
     }
     // The frame's mouse look: all the motion since the last frame.

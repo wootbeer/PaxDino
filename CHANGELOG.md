@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.6 Beta] - 2026-10-26
+
+### Fixed
+- Mouse look could write to the last match's player after quitting, a
+  possible cause of the crash after restarting matches
+
 ## [0.1.5 Beta] - 2026-10-23
 
 ### Fixed
