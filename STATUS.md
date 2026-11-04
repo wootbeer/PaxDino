@@ -5,6 +5,12 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-11-04, round 187: Leave Game from the AppImage
+
+Inside an AppImage /proc/self/exe is the binary in its mount, which goes
+when the process that started it exits: Leave Game starts $APPIMAGE (the
+AppImage file) when it's set, else /proc/self/exe's path.
+
 ## 2026-11-03, round 186: the window in front on Windows
 
 The user's Windows 11 mini PC opened PaxDino behind other windows (Explorer),

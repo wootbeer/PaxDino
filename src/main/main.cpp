@@ -787,9 +787,20 @@ namespace {
 #else
         unsetenv("PAXDINO_NETPLAY");
         unsetenv("PAXDINO_AUTOSTART");
-        std::error_code ec;
-        std::string self = std::filesystem::read_symlink("/proc/self/exe", ec).string();
-        if (ec || self.empty()) {
+        // The AppImage itself when run from one: this binary is in its mount,
+        // which goes once this process has.
+        std::string self;
+        if (const char* appimage = std::getenv("APPIMAGE"); appimage != nullptr && appimage[0] != '\0') {
+            self = appimage;
+        }
+        else {
+            std::error_code ec;
+            self = std::filesystem::read_symlink("/proc/self/exe", ec).string();
+            if (ec) {
+                return;
+            }
+        }
+        if (self.empty()) {
             return;
         }
         char flag[] = "--netplay";
