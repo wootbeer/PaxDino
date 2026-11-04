@@ -17,6 +17,7 @@
 // drift. So each menu is drawn exactly as in 4:3, and its background images
 // are drawn a second time, stretched, into the bars either side.
 #include <algorithm>
+#include <iterator>
 #include <mutex>
 #include <vector>
 #include <cstdlib>
@@ -27,6 +28,7 @@
 #include <cstring>
 
 #include "recomp.h"
+#include "trw_netplay.h"
 #include "ultramodern/config.hpp"
 #include "trw_menu_cursor.h"
 
@@ -411,6 +413,26 @@ namespace {
         int32_t y = (int16_t)MEM_HU(w, 0x16);
         return Box{ x, y, x + MEM_HU(w, 0x18), y + MEM_HU(w, 0x1A) };
     }
+}
+
+// The front end's screen (what func_00299898 answers: *0x80144E18, or the
+// top of the screen stack at *0x80144E00 when that's -1); -1 if unknown. As
+// src/main/fps_controls.cpp reads it.
+static int32_t front_end_screen(uint8_t* rdram) {
+    int32_t screen = MEM_W(0, (gpr)(int32_t)0x80144E18);
+    if (screen >= 0) {
+        return screen;
+    }
+    uint32_t stack = (uint32_t)MEM_W(0, (gpr)(int32_t)0x80144E00);
+    if (!valid_widget(stack)) {
+        return -1;
+    }
+    int32_t top = MEM_W(4, (gpr)(int32_t)stack);
+    uint32_t entries = (uint32_t)MEM_W(0xC, (gpr)(int32_t)stack);
+    if (top < 0 || top > 64 || !valid_widget(entries)) {
+        return -1;
+    }
+    return MEM_W(4, (gpr)(int32_t)(entries + 28 * (uint32_t)top));
 }
 
 static void set_rect_aspect(uint8_t* rdram, uint32_t aspect) {
@@ -1083,6 +1105,8 @@ void trw_place_early_text(uint8_t* rdram, uint32_t dl_address) {
     MEM_W(4, (gpr)(int32_t)sync) = (int32_t)block;
 }
 
+extern "C" void trw_sync_frame(uint8_t* rdram);
+
 extern "C" void trw_frame_buffers_set(uint8_t* rdram) {
     trw_apply_extras(rdram); // src/game/extras.cpp
     if (!head_valid(rdram)) {
@@ -1097,6 +1121,9 @@ extern "C" void trw_frame_buffers_set(uint8_t* rdram) {
     last_clear_head = head;
     if (frame_start && in_match(rdram)) {
         take_early_text(rdram, base, head);
+    }
+    if (frame_start) {
+        trw_sync_frame(rdram); // src/game/sync_test.cpp
     }
     if (frame_start) {
         // RT64's frame interpolation (the Display refresh rate) is off in the
@@ -1224,13 +1251,17 @@ extern "C" int trw_pause_resume_direction(void) {
     return resume_direction.load();
 }
 
-static uint32_t find_text(uint8_t* rdram, uint32_t root, uint32_t string_id) {
+// Each text widget (type 4) showing the string `string_id` under a menu's
+// root, depth first, through at most `limit` widgets; `visit` returns true to
+// stop there. Returns the one it stopped at, or 0.
+template <typename Visit>
+static uint32_t walk_texts(uint8_t* rdram, uint32_t root, uint32_t string_id, Visit visit, int limit = 1024) {
     uint32_t stack[16];
     int depth = 0;
     uint32_t w = root;
-    for (int n = 0; n < 1024 && valid_widget(w); n++) {
+    for (int n = 0; n < limit && valid_widget(w); n++) {
         gpr g = (gpr)(int32_t)w;
-        if (MEM_HU(0xE, g) == 4 && (uint32_t)MEM_W(0x34, g) == string_id) {
+        if (MEM_HU(0xE, g) == 4 && (uint32_t)MEM_W(0x34, g) == string_id && visit(w)) {
             return w;
         }
         uint32_t child = (uint32_t)MEM_W(8, g);
@@ -1253,6 +1284,10 @@ static uint32_t find_text(uint8_t* rdram, uint32_t root, uint32_t string_id) {
         }
     }
     return 0;
+}
+
+static uint32_t find_text(uint8_t* rdram, uint32_t root, uint32_t string_id) {
+    return walk_texts(rdram, root, string_id, [](uint32_t) { return true; });
 }
 
 static int resume_item_direction(uint8_t* rdram, uint32_t root) {
@@ -1281,6 +1316,162 @@ static int resume_item_direction(uint8_t* rdram, uint32_t root) {
         child = (uint32_t)MEM_W(4, c);
     }
     return 2;
+}
+
+// Netplay: the main menu's 1 Player Trials (text 26, in an item, in its
+// holder) greyed out as the game greys 2 Player Trials (text 24) with one
+// controller (flag 0x100 on both), so the highlight skips it: trials are one
+// player's. 2 Player Trials too with more than two players. Both games do it
+// alike, from the game's own frame.
+static void grey_out_item(uint8_t* rdram, uint32_t root, uint32_t string_id) {
+    constexpr uint32_t kGreyed = 0x100;
+    uint32_t text = find_text(rdram, root, string_id);
+    uint32_t item = text != 0 ? (uint32_t)MEM_W(0, (gpr)(int32_t)text) : 0;
+    if (!valid_widget(item) || MEM_HU(0xE, (gpr)(int32_t)item) != 9) {
+        return;
+    }
+    uint32_t holder = (uint32_t)MEM_W(0, (gpr)(int32_t)item);
+    for (uint32_t w : { item, holder }) {
+        if (valid_widget(w)) {
+            MEM_W(0x10, (gpr)(int32_t)w) = (int32_t)((uint32_t)MEM_W(0x10, (gpr)(int32_t)w) | kGreyed);
+        }
+    }
+    // The text drawn dim with it: a text with a colour of its own (+0x30,
+    // 0xFF000000 on Multiplayer and Controller Pak) is drawn so greyed or
+    // not; the trials' (0x00030000) follow their item.
+    constexpr uint32_t kOwnColour = 0xFF000000, kItemColour = 0x00030000;
+    if ((uint32_t)MEM_W(0x30, (gpr)(int32_t)text) == kOwnColour) {
+        MEM_W(0x30, (gpr)(int32_t)text) = (int32_t)kItemColour;
+    }
+}
+
+// Netplay: the main menu's 1 Player Trials (and 2 Player Trials with more
+// than two players), and on the Controller Pak screen everything that
+// changes a pak (each player's own is on every PC, and the host drives the
+// menus). Load Players and Back stay. Text ids: the game's string table.
+// The menu items netplay's automatic profile loading watches
+// (src/main/fps_controls.cpp), as the last menu drawn has them: the item's
+// word at +0x10 (its alpha in the top byte, 0xC8 when highlighted on the main
+// menu; 0x40 highlighted on Load Players; 0x100 greyed), or -1 if it isn't
+// there.
+static constexpr uint32_t kWatchedTexts[] = { 24, 36, 57, 60, 208, 220, 222, 226, 227, 233 };
+static int64_t watched_flags[std::size(kWatchedTexts)] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+// And whether it shows its own string from the table (its text pointer, +0x38,
+// is 0 then): Load Players points the PLAYER n item at a loaded profile's
+// name instead.
+static bool watched_own[std::size(kWatchedTexts)] = {};
+// Load Players' lists (each controller's has the same items; only the one
+// being picked from shows its cursor): whether its DONE is highlighted, and
+// whether its first row is, showing a profile that can be taken (a name,
+// not greyed as already loaded).
+static bool done_highlighted = false;
+static bool first_profile_highlighted = false;
+static bool list_highlighted = false; // any of its items: a list is open
+// Its "no players on this pak: create player?" YES and NO: which is
+// highlighted (0 neither, 1 YES, 2 NO).
+static int create_prompt = 0;
+
+static void watch_menu_texts(uint8_t* rdram, uint32_t root) {
+    int64_t flags[std::size(kWatchedTexts)];
+    bool own[std::size(kWatchedTexts)];
+    bool any = false;
+    for (size_t i = 0; i < std::size(kWatchedTexts); i++) {
+        uint32_t text = find_text(rdram, root, kWatchedTexts[i]);
+        uint32_t item = text != 0 ? (uint32_t)MEM_W(0, (gpr)(int32_t)text) : 0;
+        flags[i] = valid_widget(item) ? (int64_t)(uint32_t)MEM_W(0x10, (gpr)(int32_t)item) : -1;
+        own[i] = text != 0 && MEM_W(0x38, (gpr)(int32_t)text) == 0;
+        any |= flags[i] >= 0;
+    }
+    if (any) {
+        constexpr uint32_t kDone = 367;
+        std::copy(std::begin(flags), std::end(flags), std::begin(watched_flags));
+        std::copy(std::begin(own), std::end(own), std::begin(watched_own));
+        // Load Players holds every pak screen's widgets, past a thousand.
+        constexpr int32_t kLoadPlayers = 19;
+        constexpr int kAll = 8192;
+        constexpr uint32_t kFirstRow = 368;
+        done_highlighted = list_highlighted = first_profile_highlighted = false;
+        create_prompt = 0;
+        if (front_end_screen(rdram) != kLoadPlayers) {
+            return;
+        }
+        auto item_flags = [&](uint32_t text) {
+            uint32_t item = (uint32_t)MEM_W(0, (gpr)(int32_t)text);
+            return valid_widget(item) ? (uint32_t)MEM_W(0x10, (gpr)(int32_t)item) : 0u;
+        };
+        auto lit = [&](uint32_t id) {
+            return walk_texts(rdram, root, id, [&](uint32_t text) { return (item_flags(text) & 0x40) != 0; }, kAll) != 0;
+        };
+        done_highlighted = lit(kDone);
+        list_highlighted = done_highlighted;
+        for (uint32_t row = kFirstRow; row < kFirstRow + 4 && !list_highlighted; row++) {
+            list_highlighted = lit(row);
+        }
+        // Each corner has its own (YES, NO) pair.
+        constexpr uint32_t kCreateYesNo[][2] = { { 411, 412 }, { 569, 570 }, { 661, 662 }, { 345, 344 } };
+        for (const auto& pair : kCreateYesNo) {
+            create_prompt = lit(pair[0]) ? 1 : lit(pair[1]) ? 2 : 0;
+            if (create_prompt != 0) {
+                break;
+            }
+        }
+        first_profile_highlighted = walk_texts(rdram, root, kFirstRow, [&](uint32_t text) {
+            return (item_flags(text) & 0x140) == 0x40 && MEM_W(0x38, (gpr)(int32_t)text) != 0;
+        }, kAll) != 0;
+    }
+}
+
+extern "C" int trw_menu_done_highlighted() {
+    return done_highlighted ? 1 : 0;
+}
+
+extern "C" int trw_menu_create_prompt() {
+    return create_prompt;
+}
+
+extern "C" int trw_menu_list_highlighted() {
+    return list_highlighted ? 1 : 0;
+}
+
+extern "C" int trw_menu_first_profile_highlighted() {
+    return first_profile_highlighted ? 1 : 0;
+}
+
+extern "C" int trw_menu_text_own(uint32_t string_id) {
+    for (size_t i = 0; i < std::size(kWatchedTexts); i++) {
+        if (kWatchedTexts[i] == string_id) {
+            return watched_flags[i] >= 0 && watched_own[i] ? 1 : 0;
+        }
+    }
+    return 0;
+}
+
+extern "C" int64_t trw_menu_text_flags(uint32_t string_id) {
+    for (size_t i = 0; i < std::size(kWatchedTexts); i++) {
+        if (kWatchedTexts[i] == string_id) {
+            return watched_flags[i];
+        }
+    }
+    return -1;
+}
+
+static void grey_out_netplay_items(uint8_t* rdram, uint32_t root) {
+    constexpr uint32_t kOnePlayerTrials = 26, kTwoPlayerTrials = 24;
+    constexpr uint32_t kCopyPlayers = 31, kCreatePlayers = 40, kManagePak = 48, kDeletePlayers = 59;
+    if (trw::netplay::kControllerPaks) {
+        watch_menu_texts(rdram, root); // for Load Profiles only
+    }
+    grey_out_item(rdram, root, kOnePlayerTrials);
+    if (!trw::netplay::kControllerPaks) {
+        constexpr uint32_t kControllerPak = 60; // no paks in the session
+        grey_out_item(rdram, root, kControllerPak);
+    }
+    if (trw::netplay::players_playing() > 2) {
+        grey_out_item(rdram, root, kTwoPlayerTrials);
+    }
+    for (uint32_t id : { kCopyPlayers, kCreatePlayers, kManagePak, kDeletePlayers }) {
+        grey_out_item(rdram, root, id);
+    }
 }
 
 // The pause list (a group holding a dark box, type 6, then its items, type
@@ -1517,6 +1708,9 @@ extern "C" void trw_menu_widget_begin(uint8_t* rdram, gpr widget, gpr sp) {
     if (!valid_widget((uint32_t)widget) || MEM_W(0, widget) != 0) {
         return;
     }
+    if (trw::netplay::active()) {
+        grey_out_netplay_items(rdram, (uint32_t)widget);
+    }
     publish_menu_items(rdram, (uint32_t)widget);
     title_screen.store(is_title_menu(rdram, (uint32_t)widget));
     resume_direction.store(MEM_W(0, (gpr)(int32_t)0x801407D4) != 0 ? resume_item_direction(rdram, (uint32_t)widget) : 2);
@@ -1603,8 +1797,22 @@ extern "C" void trw_menu_image_end(uint8_t* rdram) {
     uint32_t size = end - start;
     bool copy = end > start && size < 0x4000;
     DlWriter dl = dl_at_head(rdram);
+    // Some backgrounds stop short of the bottom (the main menu's and the level
+    // select's, at row 190 of 222), the rows under them black: in widescreen
+    // they're filled with the background mirrored about its bottom edge (no
+    // seam), in the bars and, under the panels, in the 4:3 area too. Not on
+    // the character and loadout selects: the game draws the players'
+    // portraits (3D models) in those rows and copies them up into the panels.
+    constexpr int32_t kCharacterSelect = 7, kLoadoutSelect = 8;
+    const int32_t screen = front_end_screen(rdram);
+    const int32_t mirror_y = menu_image_bottom;
+    const bool fill_below = menu_image_full && mirror_y < (int32_t)kMenuHeight &&
+        mirror_y - menu_image_top >= (int32_t)kMenuHeight - mirror_y && screen != kCharacterSelect && screen != kLoadoutSelect;
+    bool mirror = false;
     // Commands [from, to) again, their texture rectangles moved right by
-    // `shift` pixels (left if negative), clipped at the screen's left edge.
+    // `shift` pixels (left if negative), clipped at the screen's left edge,
+    // and if `mirror` flipped about row mirror_y (only those that land above
+    // the menus' bottom).
     bool clip_to_bar = false;
     auto repeat_range = [&](uint32_t from, uint32_t to, int32_t shift) {
         for (uint32_t a = from; a < to; a += 8) {
@@ -1615,13 +1823,15 @@ extern "C" void trw_menu_image_end(uint8_t* rdram) {
             if ((w0 >> 24) == 0xED && clip_to_bar) { // G_SETSCISSOR: the bar's stays
                 continue;
             }
-            if (shift == 0 || !texrect) {
+            if ((shift == 0 && !mirror) || !texrect) {
                 dl.cmd(w0, w1);
                 continue;
             }
             // G_TEXRECT, G_RDPHALF_1 (s, t in s10.5), G_RDPHALF_2 (dsdx, dtdy in s5.10).
             int32_t ulx = (int32_t)((w1 >> 12) & 0xFFF) + shift * 4;
             int32_t lrx = (int32_t)((w0 >> 12) & 0xFFF) + shift * 4;
+            int32_t uly = (int32_t)(w1 & 0xFFF);
+            int32_t lry = (int32_t)(w0 & 0xFFF);
             uint32_t st = (uint32_t)MEM_W(12, (gpr)(int32_t)a);
             uint32_t d = (uint32_t)MEM_W(20, (gpr)(int32_t)a);
             a += 16;
@@ -1629,19 +1839,45 @@ extern "C" void trw_menu_image_end(uint8_t* rdram) {
                 continue;
             }
             int32_t s0 = (int16_t)(st >> 16);
+            int32_t t0 = (int16_t)(st & 0xFFFF);
+            int32_t dtdy = (int16_t)(d & 0xFFFF);
             if (ulx < 0) {
                 int32_t dsdx = (int16_t)(d >> 16);
                 s0 += (-ulx) * dsdx / 128; // quarter pixels x s5.10 -> s10.5
                 ulx = 0;
             }
-            dl.cmd((w0 & ~(0xFFFu << 12)) | ((uint32_t)lrx << 12), (w1 & ~(0xFFFu << 12)) | ((uint32_t)ulx << 12));
-            dl.cmd((uint32_t)MEM_W(8, (gpr)(int32_t)(a - 16)), ((uint32_t)(s0 & 0xFFFF) << 16) | (st & 0xFFFF));
-            dl.cmd((uint32_t)MEM_W(16, (gpr)(int32_t)(a - 16)), d);
+            if (mirror) {
+                // Row y goes to 2 * mirror_y - 1 - y: the top row of the
+                // flipped rectangle shows its last row, going up the texture.
+                int32_t m = mirror_y * 4;
+                if (lry > m || uly >= lry) {
+                    continue;
+                }
+                int32_t flipped_top = 2 * m - lry;
+                int32_t flipped_bottom = 2 * m - uly;
+                if (flipped_top >= (int32_t)kMenuHeight * 4) {
+                    continue;
+                }
+                t0 += (lry - uly - 4) * dtdy / 128;
+                dtdy = -dtdy;
+                uly = flipped_top;
+                // No lower than the menus' framebuffer: RT64 sizes a
+                // framebuffer by what's drawn to it, and a taller one runs
+                // into the game's next one (the loadout's portraits).
+                lry = std::min(flipped_bottom, (int32_t)kMenuHeight * 4);
+            }
+            dl.cmd((w0 & ~0xFFFFFFu) | ((uint32_t)lrx << 12) | (uint32_t)lry, (w1 & ~0xFFFFFFu) | ((uint32_t)ulx << 12) | (uint32_t)uly);
+            dl.cmd((uint32_t)MEM_W(8, (gpr)(int32_t)(a - 16)), ((uint32_t)(s0 & 0xFFFF) << 16) | ((uint32_t)t0 & 0xFFFF));
+            dl.cmd((uint32_t)MEM_W(16, (gpr)(int32_t)(a - 16)), (d & 0xFFFF0000u) | ((uint32_t)dtdy & 0xFFFF));
         }
     };
     auto repeat = [&](int32_t shift) { repeat_range(start, end, shift); };
-    // Black at kBarShade over columns [x0, x1) of the image's rows.
-    auto shade = [&](int32_t x0, int32_t x1) {
+    // Black at kBarShade over columns [x0, x1) of the image's rows (and the
+    // mirrored ones under it).
+    const int32_t shade_bottom = fill_below ? (int32_t)kMenuHeight : menu_image_bottom;
+    auto shade = [&](int32_t x0, int32_t x1, int32_t y0 = -1, int32_t y1 = -1) {
+        y0 = y0 < 0 ? menu_image_top : y0;
+        y1 = y1 < 0 ? shade_bottom : y1;
         dl.cmd(0x64000019, 0);          // gEXPushOtherMode
         dl.cmd(0x6400001B, 0);          // gEXPushCombine
         dl.cmd(0x64000027, 0);          // gEXPushPrimColor
@@ -1649,8 +1885,8 @@ extern "C" void trw_menu_image_end(uint8_t* rdram) {
         dl.cmd(0xE200001C, 0x00504240); // gDPSetRenderMode(G_RM_XLU_SURF, G_RM_XLU_SURF2)
         dl.cmd(0xFCFFFFFF, 0xFFFDF6FB); // gDPSetCombineMode(G_CC_PRIMITIVE, G_CC_PRIMITIVE)
         dl.cmd(0xFA000000, kBarShade);  // gDPSetPrimColor
-        dl.cmd(0xF6000000 | ((uint32_t)x1 * 4 << 12) | ((uint32_t)menu_image_bottom * 4), // gDPFillRectangle
-            ((uint32_t)x0 * 4 << 12) | ((uint32_t)menu_image_top * 4));
+        dl.cmd(0xF6000000 | ((uint32_t)x1 * 4 << 12) | ((uint32_t)y1 * 4), // gDPFillRectangle
+            ((uint32_t)x0 * 4 << 12) | ((uint32_t)y0 * 4));
         dl.cmd(0x64000028, 0);          // gEXPopPrimColor
         dl.cmd(0x6400001C, 0);          // gEXPopCombine
         dl.cmd(0x6400001A, 0);          // gEXPopOtherMode
@@ -1662,17 +1898,30 @@ extern "C" void trw_menu_image_end(uint8_t* rdram) {
     // that edge gets the edge's rock (what fills the hole isn't copied, see
     // trw_menu_image_begin); then copies by a third of the width each way.
     auto bar = [&](uint32_t left_origin, uint32_t right_origin, int32_t ulx, int32_t lrx, int32_t edge_step) {
-        set_scissor(dl, left_origin, right_origin, ulx, menu_image_top, lrx, menu_image_bottom);
         clip_to_bar = true;
-        if (menu_image_full) {
-            for (int step = 3; step >= 1; step--) {
-                repeat(edge_step * step);
+        for (bool flipped : { false, true }) {
+            if (flipped && !fill_below) {
+                break;
             }
-            int32_t shift = kMenuHalfWidth * 2 / 3;
-            repeat(shift);
-            repeat(-shift);
+            mirror = flipped;
+            if (flipped) {
+                set_scissor(dl, left_origin, right_origin, ulx, mirror_y, lrx, kMenuHeight);
+            }
+            else {
+                set_scissor(dl, left_origin, right_origin, ulx, menu_image_top, lrx, menu_image_bottom);
+            }
+            if (menu_image_full) {
+                for (int step = 3; step >= 1; step--) {
+                    repeat(edge_step * step);
+                }
+                int32_t shift = kMenuHalfWidth * 2 / 3;
+                repeat(shift);
+                repeat(-shift);
+            }
+            repeat(0);
         }
-        repeat(0);
+        mirror = false;
+        set_scissor(dl, left_origin, right_origin, ulx, menu_image_top, lrx, shade_bottom);
         {
             // The copies repeat plainly beside the 4:3 picture: darkened over
             // the image's box (an image filling a hole gets its own), so the
@@ -1695,6 +1944,23 @@ extern "C" void trw_menu_image_end(uint8_t* rdram) {
     dl.cmd(0x64000033, kRectAspectAdjust);
     if (copy) {
         repeat(0);
+        if (fill_below) {
+            // Under the background, in its own rows: the mirrored copy, over
+            // copies of it shifted a third of the width each way, whose rock
+            // shows through its holes (the main menu's at the bottom left,
+            // which a patch fills only above the mirror line).
+            dl.cmd(0x64000017, 0); // gEXPushScissor
+            set_scissor(dl, kOriginCenter, kOriginCenter, -kMenuHalfWidth * 4, mirror_y, kMenuHalfWidth * 4, kMenuHeight);
+            mirror = true;
+            int32_t shift = kMenuHalfWidth * 2 / 3;
+            repeat(-shift);
+            repeat(shift);
+            repeat(0);
+            mirror = false;
+            // Dimmed like the bars, so it stays behind the game's own.
+            shade(menu_image_left, menu_image_right, mirror_y, kMenuHeight);
+            dl.cmd(0x64000018, 0); // gEXPopScissor
+        }
         // The background's outermost columns (rock beside the panels' metal
         // on most screens) are shaded like the bars, which reach under them,
         // so no undimmed line shows between the two.

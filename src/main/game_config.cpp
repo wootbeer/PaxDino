@@ -1,6 +1,8 @@
 // Game-specific options on the General tab: which pak each controller holds,
 // and local multiplayer. See include/trw_config.h.
 #include "trw_config.h"
+#include "trw_netplay.h"
+#include "trw_pak.h"
 
 #include <string>
 #include <vector>
@@ -150,7 +152,13 @@ bool trw::config::get_invert_mouse_y() {
 }
 
 bool trw::config::get_look_spring_override(int port) {
-    if (!options_added || port < 0 || port > 3) {
+    if (port < 0 || port > 3) {
+        return false;
+    }
+    if (const SharedSettings* shared = shared_settings_in_use()) {
+        return (shared->look_spring >> port) & 1;
+    }
+    if (!options_added) {
         return false;
     }
     std::string id = port == 0 ? look_spring_override_id : look_spring_override_id + "_p" + std::to_string(port + 1);
@@ -165,6 +173,15 @@ bool trw::config::get_menu_cursor() {
 }
 
 trw::config::Accessory trw::config::get_accessory(int port) {
+    // Netplay: the session's Controller Paks (each player's own, the same on
+    // every PC, src/game/controller_pak_hle.cpp), and no rumble.
+    if (trw::netplay::active()) {
+        return trw::pak::session_has(port) ? Accessory::ControllerPak : Accessory::None;
+    }
+    return get_accessory_setting(port);
+}
+
+trw::config::Accessory trw::config::get_accessory_setting(int port) {
     if (!options_added) {
         return Accessory::None;
     }

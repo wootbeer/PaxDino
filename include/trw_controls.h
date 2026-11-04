@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
 
 // Mouse and keyboard controls (src/main/fps_controls.cpp).
 namespace trw::controls {
@@ -30,6 +31,9 @@ namespace trw::controls {
     // renderer (src/main/main.cpp), for the frame timing log.
     void camera_begin();
     void display_list_sent(uint32_t dl_address);
+    // Netplay: the character a controller port's player has (from the match
+    // now, or the last one), as the game names it; "" if not known yet.
+    std::string character_name(int port);
     // Set at boot (tlb_views.cpp) so the controls can read the game's state.
     extern uint8_t* rdram;
 }

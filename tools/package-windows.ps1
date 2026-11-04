@@ -7,7 +7,7 @@
 # defaults to x86, which can't link x64):
 #
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-#   .\tools\package-windows.ps1 -Version 0.1.6-beta
+#   .\tools\package-windows.ps1 -Version 0.1.7-beta
 #
 # Output: dist\PaxDino-<version>-windows.zip containing the exe,
 # its DLLs, the assets folder (loaded relative to the working directory, which
@@ -26,7 +26,11 @@ $root = Split-Path $PSScriptRoot -Parent
 # Visual Studio's x64 build environment (compiler libraries, Windows SDK, Ninja).
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path $vswhere)) { throw "Visual Studio not found (no vswhere.exe) -- see BUILDING.md." }
-$vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+# The newest install with clang-cl too (as tools\setup-windows.ps1).
+$vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath
+if (-not $vsPath) {
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+}
 if (-not $vsPath) { throw "No Visual Studio install with the C++ tools found -- see BUILDING.md." }
 if ($env:VSCMD_ARG_TGT_ARCH -ne "x64") {
     & (Join-Path $vsPath "Common7\Tools\Launch-VsDevShell.ps1") -Arch amd64 -HostArch amd64 -SkipAutomaticLocation | Out-Null
@@ -44,10 +48,37 @@ if (-not (Test-Path $ClangCl)) {
     throw "clang-cl not found at $ClangCl -- pass -ClangCl <path> or set `$env:TRW_CLANGCL."
 }
 
+# The build type a folder was configured with, from its CMakeCache.txt.
+function Get-BuildType([string]$dir) {
+    $cache = Join-Path $dir "CMakeCache.txt"
+    if (-not (Test-Path $cache)) { return $null }
+    $line = Select-String -Path $cache -Pattern "^CMAKE_BUILD_TYPE:" | Select-Object -First 1
+    if ($line) { return ($line.Line -split "=", 2)[1] }
+    return ""
+}
+
+# A folder left over from another build type is started over: its objects
+# would otherwise link Microsoft's debug runtime (MSVCP140D.dll and the
+# like), which only PCs with Visual Studio have.
+$type = Get-BuildType $BuildDir
+if ($null -ne $type -and $type -ne "Release") {
+    Write-Host "$BuildDir was configured as '$type'; starting it over as Release."
+    Remove-Item $BuildDir -Recurse -Force
+}
+
 cmake -S . -B $BuildDir -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_COMPILER=$ClangCl" "-DCMAKE_CXX_COMPILER=$ClangCl"
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
+$type = Get-BuildType $BuildDir
+if ($type -ne "Release") { throw "$BuildDir configured as '$type', not Release." }
 cmake --build $BuildDir --target PaxDino
 if ($LASTEXITCODE -ne 0) { throw "Build failed." }
+
+# Never ship an exe that needs the debug runtime.
+$exe = Join-Path $BuildDir "PaxDino.exe"
+$debugRuntime = Select-String -Path $exe -Pattern "MSVCP140D|VCRUNTIME140D|VCRUNTIME140_1D|ucrtbased" -List
+if ($debugRuntime) {
+    throw "PaxDino.exe uses Microsoft's debug runtime ($($debugRuntime.Matches[0].Value).dll); it won't run on PCs without Visual Studio. Delete $BuildDir and run this again."
+}
 
 $name = "PaxDino-$Version-windows"
 $stage = Join-Path $root "dist\$name"
@@ -88,6 +119,9 @@ $licenses = [ordered]@{
     "GamepadMotionHelpers"  = "lib\RecompFrontend\lib\GamepadMotionHelpers\LICENSE"
     "SlotMap"               = "lib\SlotMap\README.md"
     "DirectXShaderCompiler" = "licenses\DirectXShaderCompiler.txt"
+    "SDL_GameControllerDB"  = "licenses\SDL_GameControllerDB.txt"
+    "dr_libs"               = "licenses\dr_libs.txt"
+    "stb_vorbis"            = "licenses\stb_vorbis.txt"
 }
 foreach ($entry in $licenses.GetEnumerator()) {
     if (Test-Path $entry.Value) {

@@ -19,16 +19,22 @@
 // menu in a match and leaves it again, and goes back a step in the menus;
 // Enter and E select in the menus. The overlay
 // menu is on F1 and F10 (lib-patches/RecompFrontend), which also close it.
+#include "trw_chat.h"
 #include "trw_controls.h"
+#include "trw_input_record.h"
+#include "trw_netplay.h"
+#include "trw_pak.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <string>
 
 #ifdef _WIN32
 #include "SDL.h"
@@ -44,6 +50,7 @@
 #include "recompui/recompui.h"
 #include "trw_config.h"
 #include "trw_menu_cursor.h"
+#include "ultramodern/ultramodern.hpp"
 
 uint8_t* trw::controls::rdram = nullptr;
 
@@ -226,6 +233,10 @@ namespace {
     // player, otherwise the player the keyboard is assigned to (Controls tab,
     // Assign players); -1 if none.
     int mouse_port() {
+        // Netplay: this PC's player, whatever its port.
+        if (trw::netplay::active()) {
+            return trw::netplay::local_port();
+        }
         if (recompinput::players::is_single_player_mode()) {
             return 0;
         }
@@ -237,21 +248,35 @@ namespace {
         return -1;
     }
 
-    // Adds mouse motion (`dx`, `dy`, scaled by the sensitivity option) to
-    // the yaw and pitch of `player`.
-    void turn_player_by(uint32_t player, float dx, float dy) {
+    // Mouse motion (`dx`, `dy`, scaled by the sensitivity option) as a turn
+    // in radians, the invert option applied.
+    void mouse_turn_radians(float dx, float dy, float& yaw, float& pitch) {
         if (trw::config::get_invert_mouse_y()) {
             dy = -dy;
         }
-        float yaw = read_float(player + player_yaw_offset) + mouse_look_radians(dx);
+        yaw = mouse_look_radians(dx);
+        // Screen y grows downward; pitch grows looking up.
+        pitch = -mouse_look_radians(dy);
+    }
+
+    // Adds a turn (radians) to the yaw and pitch of `player`.
+    void turn_player_radians(uint32_t player, float turn_yaw, float turn_pitch) {
+        float yaw = read_float(player + player_yaw_offset) + turn_yaw;
         if (yaw > tau) yaw -= tau;
         if (yaw < -tau) yaw += tau;
         write_float(player + player_yaw_offset, yaw);
 
-        // Screen y grows downward; pitch grows looking up.
-        float pitch = read_float(player + player_pitch_offset) - mouse_look_radians(dy);
+        float pitch = read_float(player + player_pitch_offset) + turn_pitch;
         pitch = std::clamp(pitch, -pitch_limit, pitch_limit);
         write_float(player + player_pitch_offset, pitch);
+    }
+
+    // Adds mouse motion (`dx`, `dy`, scaled by the sensitivity option) to
+    // the yaw and pitch of `player`.
+    void turn_player_by(uint32_t player, float dx, float dy) {
+        float yaw, pitch;
+        mouse_turn_radians(dx, dy, yaw, pitch);
+        turn_player_radians(player, yaw, pitch);
     }
 
     // Mouse look is applied once a game frame, as the camera is built (at
@@ -266,6 +291,10 @@ namespace {
     bool turn_kept = false;           // the last read of the mouse's port was plain mouse look (game thread)
     uint32_t look_player = 0;         // the mouse's player while plain mouse look is on
     float turn_pending_x = 0.0f, turn_pending_y = 0.0f; // mouse pixels not yet applied
+    // In the runtime's deterministic mode (netplay, the sync test) the turn is
+    // taken at the controller read, as part of the input (recorded and played
+    // back with it), and each port's is applied at the next frame's camera.
+    float read_turn_yaw[4] = {}, read_turn_pitch[4] = {};
     // The display list buffers the game builds frames in, by turns.
     constexpr uint32_t dl_head_addr = 0x8010A574;
     constexpr uint32_t dl_buffer_a = 0x806D2000;
@@ -285,7 +314,7 @@ namespace {
     // exceptions.)
     void add_turn_motion(const SDL_MouseMotionEvent& motion) {
         std::scoped_lock lock(turn_mutex);
-        if (look_player == 0 || !SDL_GetRelativeMouseMode() || recompinput::game_input_disabled()) {
+        if (look_player == 0 || !SDL_GetRelativeMouseMode() || recompinput::game_input_disabled() || trw::inputrec::replaying()) {
             return;
         }
         turn_pending_x += (float)motion.xrel;
@@ -312,8 +341,9 @@ namespace {
     }
 
     // The player the mouse aims (its look in use), or 0.
-    std::atomic<uint32_t> mouse_aims_player{ 0 };
-    std::atomic<int> mouse_aims_port{ 0 };
+    // Per controller port: the player the mouse aims there (each player in
+    // netplay may have a mouse), or 0.
+    std::atomic<uint32_t> mouse_aims_player[4]{};
 
     std::atomic<uint32_t> mouse_buttons{ 0 };
     // Buttons pressed since the last controller read, so a click shorter
@@ -376,6 +406,11 @@ namespace {
     }
 
     int SDLCALL watch_events(void*, SDL_Event* event) {
+        // Netplay chat first: what it takes (all keys while it's open, the
+        // key that opens it) the game doesn't get.
+        if (trw::chat::handle_event(*event)) {
+            return 0;
+        }
         switch (event->type) {
         case SDL_MOUSEMOTION:
             if (menu_mode.load()) {
@@ -575,7 +610,7 @@ namespace {
     float wheel_cursor_x = 0.0f, wheel_cursor_y = 0.0f;
     // The player whose wheel is open for such a pick: not drawn then
     // (trw_wheel_hidden), until the wheel has closed again.
-    std::atomic<uint32_t> picking_player{ 0 };
+    std::atomic<uint32_t> picking_player[4]{}; // per controller port
     struct WeaponPick {
         int phase = 0;  // 0 idle, 1 opening the wheel, 2 pointing, 3 letting go
         int reads = 0;  // controller reads in this phase
@@ -594,11 +629,23 @@ namespace {
     // func_00293E30) ignores presses until its timer passes 45 by holding a
     // flag (0x800CD68C) set. A press clears the flag early. The Acclaim logo
     // (mode 0) is mostly the game loading, so it's left alone.
-    void skip_boot_screen() {
+    bool boot_skipped = false; // by this controller read (recorded with it)
+
+    void skip_boot_screen_now() {
         if (trw::controls::rdram == nullptr || *guest_word(0x801407B8) != 1) {
             return;
         }
         *guest_word(0x800CD68C) = 0;
+    }
+
+    // In the runtime's deterministic mode the skip goes with the read and is
+    // made as the read is handed to the game (apply_read_extras).
+    void skip_boot_screen() {
+        if (ultramodern::is_deterministic()) {
+            boot_skipped = true;
+            return;
+        }
+        skip_boot_screen_now();
     }
 
     // The attract demo: a match started from the title screen (every real
@@ -940,6 +987,8 @@ void trw::controls::set_keyboard_defaults() {
     key(GameInput::DPAD_RIGHT, { SDL_SCANCODE_X });
     key(GameInput::DPAD_DOWN, { SDL_SCANCODE_C });
     key(GameInput::DPAD_LEFT, { SDL_SCANCODE_V });
+    // Netplay chat (Enter and T).
+    trw::chat::set_defaults();
 }
 
 // Controllers: modern dual-stick by default, the left stick moving and
@@ -1031,8 +1080,784 @@ static std::atomic<uint16_t> last_buttons[4];
 
 static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, float* y);
 
+// In the runtime's deterministic mode, what a live controller read decided
+// besides the buttons and stick (trw::inputrec::Extras): whether the mouse
+// aims this port's player, a weapon pick in progress, a boot screen skipped,
+// and the mouse's turn since the last read, taken here instead of at the
+// camera so it goes with the read (recorded, played back, sent).
+// Netplay: the host drives the menus. The front end's current screen (what
+// func_00299898 answers: *0x80144E18, or the top of the screen stack at
+// *0x80144E00 when that's -1): 3 the main menu, 0x1A how many players, 7
+// character select, 8 loadout select, 0x14 level select, 0x15 the match's
+// options, 0x19 the Rumble Pak notice.
+static int32_t front_end_screen() {
+    int32_t screen = (int32_t)*guest_word(0x80144E18);
+    if (screen >= 0) {
+        return screen;
+    }
+    uint32_t stack = *guest_word(0x80144E00);
+    if (!valid_object(stack)) {
+        return -1;
+    }
+    int32_t top = (int32_t)*guest_word(stack + 4);
+    uint32_t entries = *guest_word(stack + 0xC);
+    if (top < 0 || !valid_object(entries)) {
+        return -1;
+    }
+    return (int32_t)*guest_word(entries + 28 * (uint32_t)top + 4);
+}
+
+// A joiner whose host is gone plays on alone, and the game still answers
+// player 1's controller alone in the menus and the pause: this PC's
+// controller is player 1's there too, and in a match its Start pauses as
+// player 1 (who otherwise stands still), so the pause's Quit takes it back to
+// the menus. Before host_drives_menus takes this player's own read out there.
+static void stand_in_for_host(trw::inputrec::PortRead (&reads)[4]) {
+    int local = trw::netplay::local_port();
+    if (trw::controls::rdram == nullptr || !trw::netplay::host_gone() || local <= 0 || local >= 4) {
+        return;
+    }
+    uint32_t mode = *guest_word(0x801407B8);
+    bool front_end = mode <= 4 || mode == 8 || mode == 20;
+    bool paused = *guest_word(0x801407D4) != 0;
+    if (front_end || paused) {
+        reads[0] = reads[local];
+        return;
+    }
+    trw::inputrec::PortRead start{};
+    start.response = 1;
+    start.buttons = reads[local].buttons & BTN_START;
+    reads[0] = start;
+}
+
+// A read from another player than the host, as the game should get it: in
+// the front end only on character and loadout select (each player picks
+// their own), in a match everything but Start (only the host pauses), and
+// nothing while paused. From the game's state alone, so both PCs filter it
+// the same way.
+static void host_drives_menus(trw::inputrec::PortRead& read) {
+    if (trw::controls::rdram == nullptr) {
+        return;
+    }
+    constexpr int32_t kCharacterSelect = 7, kLoadoutSelect = 8;
+    uint32_t mode = *guest_word(0x801407B8);
+    bool front_end = mode <= 4 || mode == 8 || mode == 20;
+    bool paused = *guest_word(0x801407D4) != 0;
+    int32_t screen = front_end ? front_end_screen() : -1;
+    bool own_screen = front_end && (screen == kCharacterSelect || screen == kLoadoutSelect);
+    if ((front_end && !own_screen) || (!front_end && paused)) {
+        int32_t response = read.response;
+        read = trw::inputrec::PortRead{};
+        read.response = response;
+        return;
+    }
+    if (!front_end) {
+        read.buttons &= ~(uint32_t)BTN_START;
+    }
+}
+
+// Netplay: neither PC has a Controller Pak (src/main/game_config.cpp), so the
+// game asks at boot (No Controller Pak Found: Retry, Continue Without
+// Saving; front end screen 0x1D in mode 0). Player 1's read answers it:
+// down to Continue, then A, again while it's up. Counted in sweeps from the
+// game's state, so both PCs press the same.
+static void answer_pak_prompt(trw::inputrec::PortRead& read) {
+    static uint32_t sweeps_on_prompt = 0;
+    if (trw::controls::rdram == nullptr || *guest_word(0x801407B8) != 0 || front_end_screen() != 0x1D) {
+        sweeps_on_prompt = 0;
+        return;
+    }
+    uint32_t step = sweeps_on_prompt++ % 24;
+    read.buttons = 0;
+    read.x = read.y = 0.0f;
+    if (step < 4) {
+        read.buttons = BTN_DPAD_DOWN;
+        read.y = -1.0f;
+    }
+    else if (step >= 12 && step < 16) {
+        read.buttons = BTN_A;
+    }
+}
+
+// Netplay: How Many Players (front end screen 0x1A) is skipped. The screen
+// is one item whose value Left and Right step (1 to 4); its count is in the
+// screen's object, 8 bytes before the digit its text shows: the top of the
+// screen stack (*0x80144E00) holds the highlighted item, whose item (type 9)
+// holds a bar and the text (type 4, its string at +0x38). Pressing Left and
+// Right to it didn't work (once pressed, the count kept stepping round), so
+// the count and its digit are set to the session's players and A is pressed,
+// from the game's state, so both PCs do the same.
+static uint32_t player_count_text() {
+    uint32_t stack = *guest_word(0x80144E00);
+    if (!valid_object(stack)) {
+        return 0;
+    }
+    int32_t top = (int32_t)*guest_word(stack + 4);
+    uint32_t entries = *guest_word(stack + 0xC);
+    if (top < 0 || !valid_object(entries) || (int32_t)*guest_word(entries + 28 * (uint32_t)top + 4) != 0x1A) {
+        return 0;
+    }
+    uint32_t holder = *guest_word(entries + 28 * (uint32_t)top + 8);
+    uint32_t item = valid_object(holder) ? *guest_word(holder + 8) : 0;
+    uint32_t part = valid_object(item) ? *guest_word(item + 8) : 0;
+    for (int i = 0; i < 4 && valid_object(part); i++, part = *guest_word(part + 4)) {
+        if ((*guest_word(part + 0xC) & 0xFFFF) != 4) {
+            continue;
+        }
+        uint32_t text = *guest_word(part + 0x38);
+        bool ok = valid_object(text) && valid_object(text - 8) && (text & 3) == 0;
+        return ok ? text : 0;
+    }
+    return 0;
+}
+
+// Each sweep on the screen: the count set, Left and Right taken out, and A
+// pressed for one sweep in eight (the game ignores it while the screen comes
+// in). Off the screen once A takes, so the press doesn't reach the next one.
+static void skip_player_count(trw::inputrec::PortRead& read, int32_t players) {
+    static uint32_t sweeps_on_screen = 0;
+    if (trw::controls::rdram == nullptr || front_end_screen() != 0x1A) {
+        sweeps_on_screen = 0;
+        return;
+    }
+    read.buttons &= ~(uint32_t)(BTN_DPAD_LEFT | BTN_DPAD_RIGHT | BTN_A);
+    read.x = 0.0f;
+    uint32_t text = player_count_text();
+    if (text != 0 && players >= 1 && players <= 4) {
+        uint32_t* count = guest_word(text - 8);
+        uint32_t* value = guest_word(text + 0xC);
+        uint32_t* digits = guest_word(text);
+        uint32_t digit = *digits >> 24;
+        if (*count >= 1 && *count <= 4 && *value >= 1 && *value <= 4 && digit >= '1' && digit <= '4') {
+            *count = *value = (uint32_t)players;
+            *digits = (*digits & 0x00FFFFFFu) | ((uint32_t)('0' + players) << 24);
+        }
+    }
+    if (sweeps_on_screen++ % 8 == 7) {
+        read.buttons |= BTN_A;
+    }
+}
+
+// Netplay, with the host's Load Profiles on (the Netplay screen): each
+// player's first profile on their Controller Pak loaded for them once a
+// session (a session is a launch), so their stats and medals
+// are kept (the game saves only to a loaded profile). Every pak is on every
+// PC, and the reads are steered from the game's state alone, as
+// skip_player_count does, so every PC presses the same. The host's read takes
+// the menus to Load Players (front end screen 19, from the Controller Pak
+// screen, 27). There each controller has a corner: that player's A opens their
+// pak's list there, A again takes the highlighted profile, its name shows on
+// the centre list's cursor row, their stick moves it to their own row (PLAYER
+// n), and A puts it there; then their DONE. A player waiting (their A pressed
+// while another's list is open) shows WAIT, and their list opens on that DONE;
+// with nobody waiting, DONE closes Load Players (the profiles stay loaded), and
+// it's entered again for the next. Players with no pak, or no Rage Wars save
+// on it, are left out. A is pressed in a list only on a profile it can take: a
+// pak whose save the game can't read asks "create player?" instead (answered
+// NO), and a profile already loaded is greyed (DONE). Each step waits for the
+// screen to show it took, presses again a few times if not, and gives up
+// (leaving the menus to the host) after that.
+extern "C" int64_t trw_menu_text_flags(uint32_t string_id); // src/game/widescreen.cpp
+extern "C" int trw_menu_text_own(uint32_t string_id);
+extern "C" int trw_menu_done_highlighted();
+extern "C" int trw_menu_list_highlighted();
+extern "C" int trw_menu_create_prompt();
+extern "C" int trw_menu_first_profile_highlighted();
+
+static void load_profiles(trw::inputrec::PortRead (&reads)[4]) {
+    trw::inputrec::PortRead& read = reads[0];
+    constexpr int32_t kMainMenu = 3, kPakMenu = 27, kLoadPlayers = 19;
+    constexpr uint32_t kControllerPak = 60, kLoadPlayersText = 57, kPakBack = 36, kBack = 226;
+    constexpr uint32_t kSlotText[4] = { 227, 220, 208, 222 }; // "PLAYER 1" to "PLAYER 4"
+    constexpr int64_t kHighlighted = 0x40;
+    constexpr uint32_t kPress = 8;        // sweeps a press and its release take
+    constexpr uint32_t kSettle = 45;      // sweeps to wait for a step to show
+    constexpr int kTries = 5;
+    enum class Step { Wait, Main, PakMenu, Slot, Pick, Close, Escape, Reenter, Leave, Done };
+    static Step step = Step::Wait;
+    static uint32_t timer = 0;
+    static int tries = 0;
+    static int slot = 0;
+    static int picks = 0;
+    static bool at_done = false;
+    static bool opened = false; // this player's A pressed to open their list
+    if (trw::controls::rdram == nullptr || step == Step::Done) {
+        return;
+    }
+    int32_t screen = front_end_screen();
+    // A move up or down: the stick (the D-pad as well moved the cursor
+    // twice), held for half of kPress. A press that takes the player
+    // somewhere (A): once a kSettle, so the screen shows it before the next.
+    auto move = [&](trw::inputrec::PortRead& r, bool down) {
+        bool held = (timer % kPress) < kPress / 2;
+        r.buttons = 0;
+        r.x = 0.0f;
+        r.y = !held ? 0.0f : down ? -1.0f : 1.0f;
+    };
+    auto press_once = [&](trw::inputrec::PortRead& r, uint16_t button) {
+        r.buttons = (timer % kSettle) < kPress / 2 ? button : 0;
+        r.x = r.y = 0.0f;
+    };
+    // The row a picked profile's name shows on, not put down yet: the
+    // cursor's (highlighted). Put down, the name stays and the cursor goes.
+    auto preview_row = [&]() {
+        for (int p = 0; p < 4; p++) {
+            int64_t f = trw_menu_text_flags(kSlotText[p]);
+            if (f >= 0 && (f & kHighlighted) != 0 && !trw_menu_text_own(kSlotText[p])) {
+                return p;
+            }
+        }
+        return -1;
+    };
+    auto put_down = [&](int p) {
+        int64_t f = trw_menu_text_flags(kSlotText[p]);
+        return f >= 0 && (f & kHighlighted) == 0 && !trw_menu_text_own(kSlotText[p]);
+    };
+    // This player's list is open but has nothing to take: DONE.
+    auto skip = [&](const char* why) {
+        std::fprintf(stderr, "[NET] loading profiles: player %d skipped: %s\n", slot + 1, why);
+        picks = 0;
+        step = Step::Close;
+        at_done = false;
+        timer = 0;
+        tries = 0;
+    };
+    auto give_up = [&](const char* why) {
+        std::fprintf(stderr, "[NET] loading profiles: %s; the host can load them on Load Players\n", why);
+        step = Step::Done;
+    };
+    auto next_slot = [&](int from) {
+        for (int p = from; p < trw::netplay::players_playing() && p < 4; p++) {
+            if (trw::pak::session_has_profile(p)) {
+                return p;
+            }
+        }
+        return -1;
+    };
+    auto highlighted = [](uint32_t id) {
+        int64_t f = trw_menu_text_flags(id);
+        // The flag on Load Players; on the main menu the highlighted item is
+        // the brighter one (0xC8 against 0x64; items always that bright are
+        // 0xFF).
+        int64_t alpha = (f >> 24) & 0xFF;
+        return f >= 0 && ((f & kHighlighted) != 0 || (alpha >= 0xC0 && alpha < 0xFF));
+    };
+    static int32_t last_screen = -1;
+    if (screen != last_screen) {
+        last_screen = screen; // each step's waits from the screen coming in
+        timer = 0;
+    }
+    timer++;
+    switch (step) {
+    case Step::Wait:
+        // The main menu, once a session, if the host chose it (Load
+        // Profiles) and anyone has a profile.
+        if (screen != kMainMenu || trw_menu_text_flags(kControllerPak) < 0) {
+            return;
+        }
+        if (const trw::config::SharedSettings* shared = trw::config::shared_settings_in_use();
+            shared == nullptr || shared->load_profiles == 0) {
+            step = Step::Done;
+            return;
+        }
+        slot = next_slot(0);
+        if (slot < 0) {
+            step = Step::Done;
+            return;
+        }
+        picks = 0;
+        step = Step::Main;
+        timer = 0;
+        tries = 0;
+        return;
+    case Step::Main:
+        read = trw::inputrec::PortRead{ 1 };
+        if (screen == kPakMenu) {
+            step = Step::PakMenu;
+            timer = 0;
+            tries = 0;
+            return;
+        }
+        if (screen != kMainMenu) {
+            give_up("the main menu went elsewhere");
+            return;
+        }
+        if (timer < kSettle) {
+            return; // the menu coming in
+        }
+        // Down to Controller Pak (its highlight seen), then A.
+        if (!highlighted(kControllerPak)) {
+            move(read, true);
+            if (timer % kSettle == 0 && ++tries > 4 * kTries) {
+                give_up("couldn't reach Controller Pak");
+            }
+            return;
+        }
+        press_once(read, BTN_A);
+        if (timer % kSettle == 0 && ++tries > kTries) {
+            give_up("Controller Pak didn't open");
+        }
+        return;
+    case Step::PakMenu:
+        read = trw::inputrec::PortRead{ 1 };
+        if (screen == kLoadPlayers) {
+            step = Step::Slot;
+            opened = false;
+            timer = 0;
+            tries = 0;
+            return;
+        }
+        if (screen != kPakMenu) {
+            give_up("the Controller Pak screen went elsewhere");
+            return;
+        }
+        if (timer < kSettle) {
+            return;
+        }
+        if (trw_menu_text_flags(kLoadPlayersText) >= 0 && !highlighted(kLoadPlayersText) && highlighted(kPakBack)) {
+            move(read, false); // from Back up to Load Players (the others are greyed)
+            return;
+        }
+        press_once(read, BTN_A);
+        if (timer % kSettle == 0 && ++tries > kTries) {
+            give_up("Load Players didn't open");
+        }
+        return;
+    case Step::Slot:
+    case Step::Pick: {
+        read = trw::inputrec::PortRead{ 1 };
+        if (screen != kLoadPlayers) {
+            give_up("Load Players closed");
+            return;
+        }
+        if (slot < 0) {
+            step = Step::Leave;
+            timer = 0;
+            tries = 0;
+            return;
+        }
+        // Their own controller's read from here.
+        trw::inputrec::PortRead& own = reads[slot];
+        own = trw::inputrec::PortRead{ 1 };
+        if (put_down(slot)) {
+            std::fprintf(stderr, "[NET] loading profiles: player %d's loaded\n", slot + 1);
+            picks = 0;
+            step = Step::Close;
+            at_done = false;
+            timer = 0;
+            tries = 0;
+            return;
+        }
+        int row = preview_row();
+        if (step == Step::Slot) {
+            if (row >= 0) {
+                step = Step::Pick; // picked: its name on the cursor's row
+                timer = 0;
+                tries = 0;
+                return;
+            }
+            if (timer < kSettle / 2) {
+                return;
+            }
+            // A only on what's known to be there: their list open on a
+            // profile that can be taken (not a pak with no players, whose
+            // "create player?" A would answer, nor one of a name loaded
+            // already). Their list opens by itself when they waited on the
+            // one before; else their A opens it.
+            if (trw_menu_first_profile_highlighted()) {
+                press_once(own, BTN_A);
+                if (timer % kSettle == 0 && ++tries > kTries) {
+                    give_up("a profile didn't come up");
+                }
+                return;
+            }
+            if (trw_menu_list_highlighted()) {
+                skip("its first profile is loaded already");
+                return;
+            }
+            if (trw_menu_create_prompt() != 0) {
+                step = Step::Escape; // no players on their pak: "create player?"
+                timer = 0;
+                tries = 0;
+                return;
+            }
+            if (!opened) {
+                press_once(own, BTN_A);
+                if (timer % kSettle == kPress) {
+                    opened = true;
+                    timer = kSettle / 2;
+                }
+                return;
+            }
+            if (timer >= 3 * kSettle) {
+                step = Step::Escape; // something else came up (no players on it?)
+                timer = 0;
+                tries = 0;
+            }
+            return;
+        }
+        if (row < 0) {
+            step = Step::Slot; // it went back: pick it again
+            timer = 0;
+            if (++picks > kTries) {
+                give_up("a profile went back");
+            }
+            return;
+        }
+        if (timer < kSettle / 2) {
+            return;
+        }
+        if (row != slot) {
+            move(own, row < slot);
+            if (timer % kSettle == 0 && ++tries > 4 * kTries) {
+                give_up("couldn't reach a player's row");
+            }
+            return;
+        }
+        press_once(own, BTN_A);
+        if (timer % kSettle == 0 && ++tries > 2 * kTries) {
+            give_up("a profile didn't go in");
+        }
+        return;
+    }
+    case Step::Close: {
+        // Their list stays open (for another profile) and the next player's
+        // waits on it: down to its DONE, and A.
+        read = trw::inputrec::PortRead{ 1 };
+        bool on_done = screen == kLoadPlayers && trw_menu_done_highlighted() != 0;
+        if (at_done && !on_done) {
+            // Closed: the next player's list opens, or (nobody waiting)
+            // Load Players closes, the loaded profiles kept; then in again
+            // for the next.
+            slot = next_slot(slot + 1);
+            step = slot < 0 ? Step::Leave : Step::Reenter;
+            timer = 0;
+            tries = 0;
+            return;
+        }
+        if (screen != kLoadPlayers) {
+            give_up("Load Players closed");
+            return;
+        }
+        trw::inputrec::PortRead& own = reads[slot];
+        own = trw::inputrec::PortRead{ 1 };
+        if (timer < kSettle / 2) {
+            return;
+        }
+        if (!on_done) {
+            move(own, true);
+            if (timer % kSettle == 0 && ++tries > 4 * kTries) {
+                give_up("couldn't reach DONE");
+            }
+            return;
+        }
+        if (!at_done) {
+            at_done = true;
+            timer = 0;
+            return;
+        }
+        // The players after this one press A first: their corner shows
+        // WAIT, and opens on this DONE (with nobody waiting, DONE closes
+        // Load Players).
+        if (timer < 2 * kSettle) {
+            if (timer >= kSettle && timer < kSettle + kPress / 2) {
+                for (int p = next_slot(slot + 1); p >= 0; p = next_slot(p + 1)) {
+                    reads[p].buttons = BTN_A; // once: more would pick from their list as it opens
+                    reads[p].x = reads[p].y = 0.0f;
+                }
+            }
+            return;
+        }
+        press_once(own, BTN_A);
+        if (timer % kSettle == 0 && ++tries > kTries) {
+            give_up("a player's list didn't close");
+        }
+        return;
+    }
+    case Step::Escape: {
+        // A pak with no players (its save unreadable) asks "create
+        // player?" in their corner: NO (which leaves Load Players).
+        read = trw::inputrec::PortRead{ 1 };
+        if (screen == kPakMenu) {
+            timer = 2 * kSettle; // answered
+        }
+        else if (screen != kLoadPlayers) {
+            give_up("Load Players went elsewhere");
+            return;
+        }
+        trw::inputrec::PortRead& own = reads[slot];
+        own = trw::inputrec::PortRead{ 1 };
+        // Over to NO, and A.
+        int prompt = screen == kLoadPlayers ? trw_menu_create_prompt() : 0;
+        if (screen == kLoadPlayers && (prompt != 0 || timer < kSettle)) {
+            if (prompt == 1) {
+                bool held = (timer % kPress) < kPress / 2;
+                own.x = held ? 1.0f : 0.0f;
+            }
+            else if (prompt == 2 && timer >= kSettle / 2) {
+                press_once(own, BTN_A);
+            }
+            if (timer % kSettle == 0 && ++tries > 3 * kTries) {
+                give_up("couldn't answer \"create player?\"");
+            }
+            return;
+        }
+        std::fprintf(stderr, "[NET] loading profiles: player %d skipped: no players the game can read on their pak\n", slot + 1);
+        slot = next_slot(slot + 1);
+        step = slot < 0 ? Step::Leave : Step::Reenter;
+        timer = 0;
+        tries = 0;
+        return;
+    }
+    case Step::Reenter:
+        // The next player's list opened, or Load Players closed: in again.
+        read = trw::inputrec::PortRead{ 1 };
+        if (screen == kPakMenu) {
+            step = Step::PakMenu;
+            timer = 0;
+            tries = 0;
+        }
+        else if (screen != kLoadPlayers) {
+            give_up("Load Players went elsewhere");
+        }
+        else if (timer >= kSettle) {
+            step = Step::Slot;
+            opened = false;
+            timer = 0;
+        }
+        return;
+    case Step::Leave:
+        // Back to the main menu.
+        read = trw::inputrec::PortRead{ 1 };
+        if (screen == kMainMenu) {
+            std::fprintf(stderr, "[NET] loading profiles: done\n");
+            step = Step::Done;
+            return;
+        }
+        if (screen != kLoadPlayers && screen != kPakMenu) {
+            give_up("the menus went elsewhere");
+            return;
+        }
+        if (timer < kSettle / 2) {
+            return;
+        }
+        if (!highlighted(screen == kLoadPlayers ? kBack : kPakBack)) {
+            move(read, true);
+        }
+        else {
+            press_once(read, BTN_A);
+        }
+        if (timer % kSettle == 0 && ++tries > 4 * kTries) {
+            give_up("couldn't get back to the main menu");
+        }
+        return;
+    case Step::Done:
+        return;
+    }
+}
+
+// Netplay: each PC shows its own player's view full screen
+// (src/game/own_view.cpp), so the 2 Player Layout option (Options) only
+// changes how that view is cut out; it's kept on Horizontal, the one it
+// handles (Vertical leaves the HUD split and part of the view culled). The
+// option's byte (0x80140227, 1 for Vertical) is set every sweep on both PCs.
+// Netplay: the character each port's player has in the match, for the menu's
+// Netplay tab and the chat. The player's +0x5E0 is the character's number in
+// the game's table of their names (17 pointers at 0x800D1FB4: TUROK, MANTID
+// DRONE, ..., ADON = 5, ...). Kept from the last match while in the menus.
+constexpr uint32_t kCharacterNames = 0x800D1FB4;
+constexpr uint32_t kCharacterCount = 17;
+std::mutex character_mutex;
+std::string character_names[4];
+
+static std::string guest_string(uint32_t addr, size_t most) {
+    std::string out;
+    for (size_t i = 0; i < most && valid_object((addr + (uint32_t)i) & ~3u); i++) {
+        uint32_t a = addr + (uint32_t)i;
+        char c = (char)((*guest_word(a & ~3u) >> (8 * (3 - (a & 3)))) & 0xFF);
+        if (c == '\0') {
+            break;
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+
+// "LORD OF THE DEAD" -> "Lord of the Dead".
+static std::string title_case(const std::string& name) {
+    std::string out;
+    size_t start = 0;
+    while (start <= name.size()) {
+        size_t end = name.find(' ', start);
+        if (end == std::string::npos) {
+            end = name.size();
+        }
+        std::string word = name.substr(start, end - start);
+        for (size_t i = 0; i < word.size(); i++) {
+            word[i] = (char)(i == 0 ? std::toupper((unsigned char)word[i]) : std::tolower((unsigned char)word[i]));
+        }
+        if (start != 0 && (word == "Of" || word == "The")) {
+            word[0] = (char)std::tolower((unsigned char)word[0]);
+        }
+        out += (start == 0 ? "" : " ") + word;
+        start = end + 1;
+    }
+    return out;
+}
+
+static void note_characters() {
+    if (trw::controls::rdram == nullptr || !match_live()) {
+        return;
+    }
+    for (int port = 0; port < 4; port++) {
+        uint32_t player = player_on_port(port);
+        if (player == 0) {
+            continue;
+        }
+        uint32_t character = *guest_word(player + 0x5E0);
+        uint32_t name = character < kCharacterCount ? *guest_word(kCharacterNames + 4 * character) : 0;
+        if (!valid_object(name)) {
+            continue;
+        }
+        std::string text = title_case(guest_string(name, 32));
+        std::lock_guard lock{ character_mutex };
+        character_names[port] = text;
+    }
+}
+
+std::string trw::controls::character_name(int port) {
+    if (port < 0 || port >= 4) {
+        return "";
+    }
+    std::lock_guard lock{ character_mutex };
+    return character_names[port];
+}
+
+static void keep_horizontal_layout() {
+    if (trw::controls::rdram != nullptr) {
+        *guest_word(0x80140224) &= ~0xFFu;
+    }
+}
+
+static trw::inputrec::Extras take_read_extras(int port) {
+    trw::inputrec::Extras extras{};
+    if (port < 0 || port >= 4 || trw::controls::rdram == nullptr) {
+        return extras;
+    }
+    uint32_t player = match_live() ? player_on_port(port) : 0;
+    if (mouse_aims_player[port].load() != 0) {
+        extras.flags |= trw::inputrec::kMouseAims;
+    }
+    if (player != 0 && picking_player[port].load() == player) {
+        extras.flags |= trw::inputrec::kPicking;
+    }
+    if (boot_skipped) {
+        extras.flags |= trw::inputrec::kSkipBoot;
+    }
+    if (port == mouse_port()) {
+        std::scoped_lock lock(turn_mutex);
+        if (turn_pending_x != 0.0f || turn_pending_y != 0.0f) {
+            float scale = (float)recompui::config::general::get_mouse_sensitivity() / 100.0f;
+            mouse_turn_radians(turn_pending_x * scale, turn_pending_y * scale, extras.yaw, extras.pitch);
+            turn_pending_x = turn_pending_y = 0.0f;
+        }
+    }
+    return extras;
+}
+
+// A read as it's handed to the game (live, played back, or from netplay):
+// the state the hooks read set as the read left it, a boot screen skipped,
+// and the turn queued for the camera.
+static void apply_read_extras(int port, const trw::inputrec::Extras& extras) {
+    if (port < 0 || port >= 4 || trw::controls::rdram == nullptr) {
+        return;
+    }
+    uint32_t player = match_live() ? player_on_port(port) : 0;
+    mouse_aims_player[port].store((extras.flags & trw::inputrec::kMouseAims) ? player : 0);
+    if (extras.flags & trw::inputrec::kPicking) {
+        picking_player[port].store(player);
+    }
+    else if (player != 0 && picking_player[port].load() == player) {
+        picking_player[port].store(0);
+    }
+    if (extras.flags & trw::inputrec::kSkipBoot) {
+        skip_boot_screen_now();
+    }
+    read_turn_yaw[port] += extras.yaw;
+    read_turn_pitch[port] += extras.pitch;
+}
+
 bool trw::controls::get_input(int player_index, uint16_t* buttons, float* x, float* y) {
-    bool ret = get_input_for_port(player_index, buttons, x, y);
+    // A recording played back (src/main/input_record.cpp) instead of the live
+    // input; otherwise, what the game gets is recorded if asked.
+    bool ret;
+    trw::inputrec::Extras extras{};
+    if (trw::netplay::active()) {
+        // Netplay: at the sweep's first port, this PC's player's read goes to
+        // the other player and every port's read for this sweep comes back.
+        static trw::inputrec::PortRead sweep_reads[4];
+        if (player_index == 0) {
+            if (trw::controls::rdram != nullptr) {
+                hold_wheels_while_paused();
+            }
+            int local = trw::netplay::local_port();
+            trw::inputrec::PortRead read{};
+            boot_skipped = false;
+            uint16_t local_buttons = 0;
+            // Chat opens in a match and in the game's menus, not paused.
+            Screen chat_screen = current_screen();
+            bool chat_allowed = chat_screen == Screen::Game || chat_screen == Screen::Menu;
+            trw::chat::set_allowed(chat_screen == Screen::Game ? trw::chat::Where::Match
+                : chat_screen == Screen::Menu ? trw::chat::Where::Menus : trw::chat::Where::Nowhere);
+            read.response = get_input_for_port(local, &local_buttons, &read.x, &read.y) ? 1 : 0;
+            read.extras = take_read_extras(local);
+            // Chat: nothing pressed while typing, nor what the Chat
+            // binding's key or button also presses.
+            if (trw::chat::typing()) {
+                local_buttons = 0;
+                read.x = read.y = 0.0f;
+                read.extras.yaw = read.extras.pitch = 0.0f;
+            }
+            else if (chat_allowed) {
+                local_buttons &= (uint16_t)~trw::chat::chat_held_buttons();
+            }
+            read.buttons = local_buttons;
+            trw::netplay::exchange(read, sweep_reads);
+            stand_in_for_host(sweep_reads);
+            answer_pak_prompt(sweep_reads[0]);
+            skip_player_count(sweep_reads[0], trw::netplay::players_playing());
+            keep_horizontal_layout();
+            note_characters();
+            for (int port = 1; port < 4; port++) {
+                host_drives_menus(sweep_reads[port]);
+            }
+            load_profiles(sweep_reads);
+        }
+        const trw::inputrec::PortRead& read = player_index >= 0 && player_index < 4 ? sweep_reads[player_index] : trw::inputrec::PortRead{};
+        *buttons = (uint16_t)read.buttons;
+        *x = read.x;
+        *y = read.y;
+        ret = read.response != 0;
+        apply_read_extras(player_index, read.extras);
+        trw::inputrec::record(player_index, ret, *buttons, *x, *y, read.extras);
+    }
+    else if (trw::inputrec::replaying()) {
+        // As the live read does first (get_input_for_port).
+        if (trw::controls::rdram != nullptr && player_index == 0) {
+            hold_wheels_while_paused();
+        }
+        ret = trw::inputrec::replay(player_index, buttons, x, y, &extras);
+        apply_read_extras(player_index, extras);
+    }
+    else {
+        boot_skipped = false;
+        ret = get_input_for_port(player_index, buttons, x, y);
+        if (ultramodern::is_deterministic()) {
+            extras = take_read_extras(player_index);
+            apply_read_extras(player_index, extras);
+        }
+        trw::inputrec::record(player_index, ret, *buttons, *x, *y, extras);
+    }
     // The mouse's player out of plain mouse look (menus, the pause, the
     // weapon wheel, the team select): no view turning.
     if (player_index == mouse_port()) {
@@ -1143,6 +1968,20 @@ void trw::controls::camera_begin() {
         return;
     }
     log_camera_frame();
+    // Deterministic mode: each port's turn taken at its controller reads.
+    if (ultramodern::is_deterministic()) {
+        for (int port = 0; port < 4; port++) {
+            if (read_turn_yaw[port] == 0.0f && read_turn_pitch[port] == 0.0f) {
+                continue;
+            }
+            uint32_t player = match_live() ? player_on_port(port) : 0;
+            if (player != 0) {
+                turn_player_radians(player, read_turn_yaw[port], read_turn_pitch[port]);
+            }
+            read_turn_yaw[port] = read_turn_pitch[port] = 0.0f;
+        }
+        return;
+    }
     // The player kept from the last controller read may be the last match's,
     // gone since it was quit (the camera is built while the next one loads).
     if (look_player == 0 || !valid_object(look_player) || !match_live() ||
@@ -1168,7 +2007,8 @@ uint16_t trw::controls::buttons_held(int port) {
 }
 
 static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, float* y) {
-    bool ret = recompinput::profiles::get_n64_input(player_index, buttons, x, y);
+    // Netplay: this PC's own controls (its player 1's) drive its port.
+    bool ret = recompinput::profiles::get_n64_input(trw::netplay::active() ? 0 : player_index, buttons, x, y);
     // The keys' and controllers' own input, before the mouse is added. Shift
     // (L by default) goes with a click (Shift and a click steps a setting
     // back), so it doesn't count.
@@ -1176,7 +2016,7 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
     uint16_t bound_buttons = shift_held ? (uint16_t)(*buttons & ~BTN_L) : *buttons;
     bool bound_input = bound_buttons != 0 || std::fabs(*x) > 0.5f || std::fabs(*y) > 0.5f;
     if (trw::controls::rdram != nullptr && player_index >= 0 && player_index < 4) {
-        if (player_index == 0) {
+        if (player_index == 0 && !trw::netplay::active()) {
             hold_wheels_while_paused();
         }
         release_a_after_pause(player_index, buttons);
@@ -1191,7 +2031,9 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
         enter_presses.store(0);
         q_presses.store(0);
         slot_request.store(-1);
-        mouse_aims_player.store(0);
+        for (auto& aims : mouse_aims_player) {
+            aims.store(0);
+        }
         return ret;
     }
     if (player_index != port) {
@@ -1413,17 +2255,16 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
     // points there instead of turning the view, and a left click is A.
     bool team_select = player != 0 && *guest_word(player + 0x11B4) != 0 && (int32_t)*guest_word(player + 0xCC8) < 0;
     bool relative = SDL_GetRelativeMouseMode() == SDL_TRUE;
-    mouse_aims_player.store(relative && !team_select ? player : 0);
-    mouse_aims_port.store(player_index);
+    mouse_aims_player[player_index].store(relative && !team_select ? player : 0);
     bool look = relative && fresh_poll.exchange(false);
     if (pick.phase != 0 && wheel_base == 0) {
         pick = WeaponPick{};
     }
     if (pick.phase != 0) {
-        picking_player.store(player);
+        picking_player[player_index].store(player);
     }
     else if (!wheel_open) {
-        picking_player.store(0);
+        picking_player[player_index].store(0);
     }
     if (pick.phase != 0) {
         pick.reads++;
@@ -1534,7 +2375,15 @@ static bool get_input_for_port(int player_index, uint16_t* buttons, float* x, fl
 // Before the HUD draws the weapon wheel (turokrw.us.toml): 1 to skip it while
 // it's only open for a pick by Q, the mouse wheel or the number keys.
 extern "C" int trw_wheel_hidden(uint8_t*, uint32_t player) {
-    return player != 0 && player == picking_player.load() ? 1 : 0;
+    if (player == 0) {
+        return 0;
+    }
+    for (const auto& picking : picking_player) {
+        if (picking.load() == player) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 // The game's look code eases each player's pitch toward the angle its look
@@ -1549,22 +2398,31 @@ extern "C" int trw_wheel_hidden(uint8_t*, uint32_t player) {
 extern "C" uint32_t trw_look_pitch_target(uint8_t* rdram, uint32_t player, uint32_t target) {
     // The game's target's last value for the mouse's player: its changes
     // (look keys, the stick) still move the view, from where the mouse left it.
-    static uint32_t last_player = 0;
-    static float last_target = 0.0f;
+    // Per controller port.
+    static uint32_t last_player[4] = {};
+    static float last_target[4] = {};
     float game_target;
     std::memcpy(&game_target, &target, sizeof(float));
-    if (player == 0 || player != mouse_aims_player.load() || !trw::config::get_look_spring_override(mouse_aims_port.load()) || !match_live()) {
-        if (player == last_player) {
-            last_player = 0;
+    int port = -1;
+    for (int p = 0; p < 4 && player != 0; p++) {
+        if (mouse_aims_player[p].load() == player) {
+            port = p;
+        }
+    }
+    if (port < 0 || !trw::config::get_look_spring_override(port) || !match_live()) {
+        for (uint32_t& last : last_player) {
+            if (last == player) {
+                last = 0;
+            }
         }
         return target;
     }
-    if (player != last_player) {
-        last_player = player;
-        last_target = game_target;
+    if (player != last_player[port]) {
+        last_player[port] = player;
+        last_target[port] = game_target;
     }
-    float pitch = read_float(player + player_pitch_offset) + (game_target - last_target);
-    last_target = game_target;
+    float pitch = read_float(player + player_pitch_offset) + (game_target - last_target[port]);
+    last_target[port] = game_target;
     pitch = std::clamp(pitch, -pitch_limit, pitch_limit);
     uint32_t bits;
     std::memcpy(&bits, &pitch, sizeof(float));

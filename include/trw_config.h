@@ -2,6 +2,7 @@
 #define __TRW_CONFIG_H__
 
 #include <cstdint>
+#include <string>
 
 #include "librecomp/config.hpp"
 
@@ -20,6 +21,9 @@ namespace trw::config {
     void add_general_options(recomp::config::Config& general);
 
     Accessory get_accessory(int port);
+    // The General tab's choice for `port`, even in netplay (where
+    // get_accessory gives the session's paks).
+    Accessory get_accessory_setting(int port);
     bool get_local_multiplayer();
     // Local Multiplayer's players, kept across launches (src/main/game_config.cpp).
     void save_player_assignment();
@@ -149,6 +153,28 @@ namespace trw::config {
     // True during a multiplayer match (src/game/weapon_rules.cpp): the option
     // is greyed out then, as the match keeps the rule it started with.
     bool weapon_rule_locked();
+}
+
+// Netplay (src/main/netplay.cpp): the settings that change what the game does
+// are the host's for everyone in the session (src/main/shared_settings.cpp).
+namespace trw::config {
+    struct SharedSettings {
+        uint32_t options = 0;     // a bit per Option
+        uint32_t weapon_rule = 0; // WeaponRule
+        uint32_t look_spring = 0; // Look Spring Override, a bit per port
+        float field_of_view = 90.0f; // it's in the game's own camera
+        uint32_t widescreen = 0;     // Aspect Ratio Expand: the widescreen fixes add to the game's display lists
+        uint32_t load_profiles = 0;  // the host's Load Profiles: each player's first profile loaded at the start
+    };
+    // This PC's.
+    SharedSettings get_shared_settings();
+    // From now on the getters above give these (the host's) instead of this
+    // PC's own, which stay as they are.
+    void use_shared_settings(const SharedSettings& settings);
+    // The ones in use, or null if this PC's own are.
+    const SharedSettings* shared_settings_in_use();
+    // A line per setting that's on, for the player joining.
+    std::string describe_shared_settings(const SharedSettings& settings);
 }
 
 // For the hooks in the recompiled code: 1 while the option is on.

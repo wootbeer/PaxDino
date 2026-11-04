@@ -13,6 +13,7 @@
 
 #include "rt64_screen_filter.h"
 #include "trw_controls.h"
+#include "trw_netplay.h"
 #include "trw_crosshair.h"
 #include "trw_menu_cursor.h"
 #include "trw_music.h"
@@ -352,7 +353,15 @@ namespace {
     bool fps60_active = false;
 }
 
+extern "C" int trw_sync_test_active(void); // src/game/sync_test.cpp
+
 extern "C" uint32_t trw_frame_step(uint8_t* rdram, uint32_t step_bits) {
+    if (trw_sync_test_active()) {
+        // Fixed: two retraces a frame, whatever the PC's speed.
+        float step = 0.5f;
+        std::memcpy(&step_bits, &step, sizeof(step));
+        return step_bits;
+    }
     if (!fps60_active) {
         return step_bits;
     }

@@ -77,6 +77,8 @@ int32_t trw_music_request(uint8_t* rdram, int32_t song);
 // src/main/crosshair.cpp: 1 to leave out a HUD sprite (the game's crosshair,
 // while another style is chosen).
 int trw_crosshair_sprite(uint8_t* rdram, uint64_t image, uint64_t x, uint64_t y, uint64_t sp);
+// src/game/own_view.cpp: a HUD sprite's commands are done (netplay's own view).
+void trw_own_view_sprite_end(uint8_t* rdram);
 
 // src/game/weapon_rules.cpp: the weapon to switch to (Loadout Restrictions,
 // Enhancements tab).

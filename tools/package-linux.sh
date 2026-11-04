@@ -110,6 +110,9 @@ plutovg lib/RecompFrontend/recompui/lib/lunasvg/plutovg/LICENSE
 FreeType lib/RecompFrontend/recompui/lib/freetype-windows-binaries/LICENSE.TXT
 GamepadMotionHelpers lib/RecompFrontend/lib/GamepadMotionHelpers/LICENSE
 SlotMap lib/SlotMap/README.md
+dr_libs licenses/dr_libs.txt
+stb_vorbis licenses/stb_vorbis.txt
+SDL_GameControllerDB licenses/SDL_GameControllerDB.txt
 LICENSES
 # SDL2 (bundled from the system by linuxdeploy): its zlib license.
 sdl_license="$(ls lib/rt64/src/contrib/mupen64plus-win32-deps/SDL2-*/COPYING.txt 2>/dev/null | head -1 || true)"

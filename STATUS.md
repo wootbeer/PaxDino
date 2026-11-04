@@ -5,6 +5,1225 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-11-03, round 186: the window in front on Windows
+
+The user's Windows 11 mini PC opened PaxDino behind other windows (Explorer),
+at start and after Leave Game. create_window now sets
+SDL_HINT_FORCE_RAISEWINDOW and raises the window; ten launcher frames in, the
+window is brought to the front again (BringWindowToTop and SetForegroundWindow
+with the foreground window's thread input attached, as the hint does), since
+the start can take a while and the focus may have gone elsewhere meanwhile;
+Leave Game's restart calls AllowSetForegroundWindow for the new process.
+Only the SDL part runs here (Linux); the Windows part is not tried.
+
+## 2026-11-03, round 185: no Extra Modes online; Controller Pak greyed
+
+Extra Modes (Time Trial and Frag Fest on the main menu, one player's) is
+never on in a session: session_settings and sane_settings clear it, so the
+host's own Unlocks tab can't turn it on either, and Unlock Everything is All
+Levels, Skins, Characters and Weapons.
+
+With paks held off, the main menu's Controller Pak (text 60) is greyed in a
+session. The 0x100 flag alone makes the cursor skip it but it was drawn
+bright: a menu text's +0x30 is its colour, 0xFF000000 (its own, drawn so
+greyed or not; Multiplayer, Controller Pak) or 0x00030000 (the trials', which
+follow their item's greyed state). grey_out_item now sets a greyed item's
+text to the latter. Checked: dim like 1 Player Trials, and Down goes
+Multiplayer, 2 Player Trials, Options.
+
+## 2026-11-03, round 184: cleanup after the pak and profile rounds
+
+- match_on and note_in_match went (only the old host-gone copy in exchange
+  read it; stand_in_for_host reads the game's own mode and pause).
+- watch_menu_texts (the Load Players walks, up to 8192 widgets a menu) runs
+  only with kControllerPaks on; with paks held off nothing reads it.
+- Comments and CHANGELOG brought in line with paks being held off (the
+  netplay.cpp header, the hardening and greyed-items entries); an unused
+  include gone; the Load Profiles block's indent.
+- Checked: no debug output left (the test builds' [AL], [SCREEN], [TX] were
+  only ever in the build copy); every net_log format is a literal (the
+  template's warning is only that it can't tell); no new warnings.
+Tested again: a session in sync (sync test, about 1500 frames), and the host
+lost mid-match: Escape pauses, Quit, YES, level select.
+
+## 2026-11-03, round 183: when the host leaves; Leave Game
+
+A joiner whose host is gone plays on alone, and the game answers player 1's
+controller alone in the menus and the pause. The menus already took the
+joiner's controller as player 1's; a match didn't: Start was the host's
+only (host_drives_menus), so nobody could pause and quit. stand_in_for_host
+(fps_controls.cpp, replacing netplay.cpp's copy in exchange) now makes this
+controller player 1's in the menus and while paused, and in a match passes
+its Start to player 1 (who otherwise stands still). Tested: host killed
+mid-match, the joiner's Escape pauses (the pause list shows on their view),
+Quit, YES, back to the level select. Backing out of character and loadout
+select after the host was lost worked before this too (tested the host lost
+before and on character select). A host that's lost (not quit) is noticed
+after kTimeout, 20 s, with "Waiting for player 1..." meanwhile.
+
+Leave Game (the Netplay tab's Session panel): a prompt, then the game quits
+(the others are told, as with closing it) and main() starts PaxDino again
+with --netplay, which opens the Netplay screen once the launcher is up
+(Linux: posix_spawn of /proc/self/exe's path; Windows: CreateProcessW of
+the module's path, not tried here). PAXDINO_NETPLAY and PAXDINO_AUTOSTART are
+cleared for it. Tested on Linux: the host was told at once, and the new
+process came up on the Netplay screen. Also: a gone player's ping isn't shown,
+and the Netplay screen no longer says each player has their own save.
+
+Seen, not changed: player 2's B on character select (nothing picked) takes
+everyone back to the main menu, as the game does.
+
+## 2026-11-03, round 182: paks held off in netplay; Unlock Everything
+
+The user's call: netplay goes without Controller Paks for now (Load Profiles
+turned out more involved: the post-match save prompt is each player's too,
+and players leaving would need thought). kControllerPaks (trw_netplay.h) is
+false: no pak is read, sent, pulled or put in the session, so every port has
+none (the No Controller Pak prompt is answered as before), and the Load
+Profiles button isn't shown. The code stays (rounds 180-181) for later.
+
+Unlock Everything, a host button on the Netplay screen (on by default, kept in
+online.txt): the session's shared options get All Levels, All Skins, All
+Characters, All Weapons and Extra Modes on, whatever the host's Unlocks tab
+says. PAXDINO_UNLOCK_ALL=0 turns it off for the PAXDINO_NETPLAY host.
+Tested both ways: character select has every character with it on, the
+first four with it off.
+
+## 2026-11-03, round 181: Load Profiles is a choice, off by default
+
+The host's Load Profiles button (Netplay screen, host card; kept in
+online.txt) goes in the shared settings (load_profiles), so every PC knows
+it; load_profiles does nothing with it off. PAXDINO_LOAD_PROFILES=1 turns it
+on for the PAXDINO_NETPLAY host. Tested both ways, in sync.
+
+## 2026-11-03, round 180: each player's profile loaded at the session's start
+
+Netplay now loads each player's first profile by itself, once a launch
+(load_profiles, src/main/fps_controls.cpp), so a match can add to their
+stats. Round 179's note had the save's layout; the note's four 0x190 records
+are a pak's four profiles (name, 9 bytes; three bytes made when the note is,
+the same for its four; the record's slot), not one player each.
+
+How Load Players works, found by trying it: each controller has a corner.
+That player's A opens their pak's list there ("ACCESSING", then the list,
+the first profile highlighted), A takes the highlighted one, and its name
+shows on the centre list at its cursor (the PLAYER n items' text pointer,
++0x38, goes to the name; the item gets 0x40). Their stick moves it, A puts
+it on that row (the name stays, the 0x40 goes), and their list stays open
+on the next row, the profile ticked. Their DONE closes it. Another player's
+A while a list is open shows WAIT, and their list opens on that DONE; DONE
+with nobody waiting closes Load Players, to the Controller Pak screen, and
+the loaded profiles stay. A pak whose save doesn't check out says "no Rage
+Wars players detected. Create player?" with NO highlighted (NO also leaves
+Load Players). A profile already loaded shows greyed (0x100) and the cursor
+skips it: two paks copied from one file have the same three bytes in their
+records and the game takes them for the same player. A fresh pak got
+different ones (34 DA 00 against 4F 01 12), so only copied paks meet that.
+
+So load_profiles steers the reads of whoever's turn it is (the host's for
+getting there, each player's own on Load Players), from the game's state
+only, so every PC presses the same: Controller Pak, Load Players, then per
+player with a Rage Wars note on their pak: A only once their list is open on
+a profile it can take (row 368 highlighted, a name, not greyed), the name
+moved to their row and put down, the next player's A (once; more picked from
+their list as it opened), then DONE; NO on "create player?"; DONE when the
+first is greyed; in again if Load Players closed; Back to the main menu at
+the end. Each corner's list items have the same text ids (DONE 367, rows
+368-371); its create prompt doesn't ((YES, NO): (411, 412), (569, 570),
+(661, 662), (345, 344)). Load Players' widget tree is past a thousand
+widgets, so those walks go to 8192 there (walk_texts, widescreen.cpp).
+
+Tested with two players here: both loaded (A and Q) and still there when
+Load Players is opened again; the host without a profile (player 2's goes on
+row 2); player 2's save damaged (skipped, NO, back to the main menu); player
+2's first profile the same as player 1's (skipped). In sync in each (sync
+test, about 1350 frames), and neither pak file changed. Not tried: three or
+four players, and a match's stats saved to each player's profile.
+
+## 2026-11-03, round 179: scoping a loaded profile in netplay (not done)
+
+Netplay matches don't add to a player's profile (stats, medals): the game
+saves only to a profile loaded on Load Players (front end screen 19, under
+the Controller Pak screen, 27), and in netplay the host drives the menus.
+Letting each player's controller through on that screen works (tried, and
+taken out again: the user wants no waiting on others, every session), so
+the way to do it is loading each player's profile by itself at the session's
+start, chosen in the launcher.
+
+Found so far: the save is one note (NRWE51, 7 pages, 1792 bytes): a 16-byte
+header, four player slots of 0x190 bytes (the four on Load Players), and a
+tail. The game's per-player records at 0x800FCB10 + 0x190 * slot (where the
+arena medal counters are, 0x800FCB26) are blank defaults and don't change
+when a profile is loaded; loading reads the whole note into the heap
+(0x8066FB50 here) and the profile goes elsewhere, not found yet. Next: a
+watchpoint on the heap copy of slot 0 while loading, to find the code that
+takes it and where it puts it, then the save path after a match.
+
+## 2026-11-03, round 178: pages for the public games
+
+The Join panel showed the first four public games of the up to 20 the Worker
+sends. Now four a page with Previous, "Page N of M" and Next under them
+(shown only with more than a page; the page kept in range as the list
+changes). Buttons rather than a scrolling box, so a controller steps through
+them too. Tested with fake games on wrangler dev: page 1 of 4, Next to the
+later ones, and the count going down as unpolled ones expired.
+
+## 2026-11-03, round 177: the menu's Netplay tab like the launcher's screen
+
+The Netplay tab (F2) in a session is laid out as the launcher's Netplay
+screen now: a Players panel, a line each (nickname and character, this PC's
+in the theme's colour) with how they are and their ping under it in smaller
+text; a Session panel beside it with the input delay, the settings for
+everyone on one line, the chat keys and how to leave. Same text sizes and
+panels; they wrap one above the other on a narrow window. Checked at 16:9
+and 4:3 in a 2-player match (in sync, 1439 frames).
+
+## 2026-11-03, round 176: chat in the game's menus
+
+The user wants to talk over the map and mode in the menus. trw::chat::Where:
+Match (as before), Menus (the front end, Screen::Menu) and Nowhere (paused,
+the fly-through, the title and boot screens). In the menus the Chat keys
+open it except Enter, which selects there, so by default T. While it's open
+the read is nothing pressed, as in a match, so typing doesn't move the
+menus; Escape clears, then closes, and is the game's (back) again after.
+Names show without a character until a match has shown one.
+
+Test (2 players, main menu): typed "which map? sss www" (the cursor didn't
+move), sent; the joiner answered; Escape twice; Enter then selected
+Multiplayer. In sync (775 frames).
+
+## 2026-11-03, round 175: the loadout's portraits were gone
+
+The user: no character portraits on the loadout select, on both PCs. Round
+163's mirrored rows: the game draws the players' portraits (3D models) in
+the rows under the background (190 to 222 of the menus' framebuffer) and
+copies them up into the panels; the mirrored copies drawn over those rows
+covered them first. Proved by turning the 4:3 strip off (still gone) and
+then all of it (back). The rows under the background are now left alone on
+the character and loadout selects (front end screens 7 and 8); the main
+menu, level select, match options and the Rumble Pak notice still get them.
+Checked: portraits on both panels, the level select's preview in place.
+
+Tried after: filling only the bars' rows there, and at the end of the menu's
+frame (after the game's drawing). The portraits went again, so the game
+reads those rows a frame later: nothing can be drawn in them on these two
+screens. Their bottom stays black, as on the N64.
+
+## 2026-11-03, round 174: telling players who's out of date
+
+- Netplay names the versions: Hello and Welcome carry this game's label
+  ("0.1.7 (1a2b3c4)": version_string and the commit, cleaned to letters,
+  digits, spaces and .()-) after the nickname in reads. A joiner on another
+  version is told "The host has PaxDino X; you have Y. Everyone needs the
+  same one: whoever has the older one can get the latest at
+  github.com/wootbeer/PaxDino/releases"; the host's lobby says a player on X
+  tried to join. The Worker stores the host's label (vn) and answers a
+  mismatched /join with "version <label>", which the game shows the same way.
+- Update check (src/main/update_check.cpp): when the Netplay screen first
+  opens, one request to GitHub's latest release of wootbeer/PaxDino; its tag
+  compared with version_string number by number; if newer, a line at the top
+  of the screen: "A newer PaxDino is out (X; you have Y)..." with the
+  releases page. Only the tag is read. Nothing is downloaded.
+- version_string is now 0.1.7 (the next release).
+
+Tests: a 0.1.0 joiner and a 0.1.7 host: both told, with both versions; the
+0.1.0 build's Netplay screen showed the newer release (0.1.6, GitHub's
+latest); the Worker's answer carried the host's label, markup stripped.
+Needs the Worker deployed again.
+
+## 2026-11-03, round 173: netplay security review and cleanup
+
+An independent read of the netplay code for what a hostile peer, join code
+service or router could do, and the fixes:
+
+- Controller Pak: a note's page chain could name pages past the pak's 128
+  (chain() checked only the low end): a crafted save read and wrote past the
+  image. Now chain() checks both ends, and valid_image() walks every note's
+  chain. (A damaged .mpk in single player benefits too.)
+- The host's Welcome and Start `assigned` set this PC's port unchecked: now
+  below 4, and below the players in Start.
+- A joiner's id is its only credential (the host rebinds its address by it):
+  it was passed on in relayed Inputs and listed in Start. Now relayed
+  packets carry none, Start names paks by port, a joiner asks the host for a
+  port's pak by port number, and a Hello without an id is ignored.
+- A joiner's own port must be its own pak (the one its file is written
+  from): if Start says otherwise, the join fails instead of writing the
+  host's image to the joiner's file.
+- Bounded growth: reads are taken only for sweeps not yet played and at most
+  256 ahead (no wrap of the drop sweep), hashes only at their 120-sweep marks
+  and within 16 checks; the local hashes pruned; pak images capped and
+  pruned to those still in the lobby; chat ids rate-limited (10 in 30 s per
+  player, on every PC) before they're remembered, the set capped; PakAsks
+  answered at most every 20 ms per peer.
+- Values from peers made sane: stick and mouse turn finite and in range
+  (on every PC alike), the host's field of view in 60-120 and its Loadout
+  Restriction a real one.
+- Chat is queued from the UI's thread and sent from the game's, which owns
+  the players' state.
+- STUN: a random transaction id, answers only from the servers asked.
+- The join code and token checked before use (six code letters, a short
+  alphanumeric token).
+- UPnP: SSDP answers only from a private address whose description is on
+  that address; the control URL on the same host; no control characters in
+  what goes into the request line and headers; the outside address shown
+  only if it's an address; replies read for at most 10 s.
+- curl (Linux): -g, http(s) only, no control characters in the URL.
+- Worker: public games stored one key each, at most 200, three new ones per
+  address in 10 minutes; a full game says "full" to a fourth joiner instead
+  of pushing one out; a game's outside address must be the caller's (else
+  dropped) and its local one private; a build version required.
+- poll_lobby split into take_matchmaker_answer, poll_host_lobby and
+  poll_joiner_lobby. The file's header no longer says two players.
+
+Left as they are: UI updates from the game's thread (the existing pattern,
+recompui's own locks), the session start's netplay.bak replaced each
+session.
+
+Tests: 2 players with different paks and nicknames, chat, in sync (1443
+frames); the launcher's public list joined; the Worker under wrangler dev
+(a made-up outside address dropped, a fourth joiner refused, no version
+refused, a fourth listing from one address not listed). Needs the Worker
+deployed again.
+
+## 2026-11-03, round 172: telling a small desync from games far apart; a desync check
+
+A desync is still reported once and the session goes on. The user wanted
+extreme cases told more plainly, not ended: with each hash (every 120
+sweeps, about 4 s) goes the game's place (trw_sync_place: the mode at
+0x801407B8 and the arena at 0x8014BD9C, a byte each, in the Packet's spare
+word). After a desync, a player whose place differs three checks in a row
+(about 12 s) gets a second message, once: the games are far out of step,
+quit (F1, then Quit) and start a new session. Nothing is ended. The cost is
+two reads every 4 s in a packet already sent. PAXDINO_FAKE_DESYNC=<sweep>
+(tests) makes one PC's hash and place read as different from that sweep.
+
+Checked again that nothing a player does on their own PC changes the game:
+round 147's audit (window size, renderer and sound settings, inputs) plus
+what came since: chat and the menu (F1) send nothing pressed, the paks are
+the same on every PC, nicknames and characters are only shown, How Many
+Players goes by the game's state. Options not shared are taken when the
+session starts, so changing them mid-session does nothing; the field of
+view, Look Spring and the aspect ratio come from the session; high
+framerate is off in deterministic mode.
+
+Tests (2 players): resizing the host's window twice, F1 open and closed and
+a chat message during a match, 1600 frames the same; with the fake desync
+from sweep 600 on the joiner, both PCs reported the desync, then 12 s later
+that the other's game was elsewhere.
+
+## 2026-11-03, round 171: nicknames
+
+Each player can set a short nickname (Your name, at the top of the Netplay
+screen, kept in online.txt; PAXDINO_NICKNAME for tests). It goes in the
+joiner's Hello (16 bytes in reads) and the host's Start (StartPaks.names,
+every port's), so every PC has every name; trw::netplay::player_name(port)
+gives it, or "Player N". Shown in the host's lobby ("Player 2: Bob, ready"),
+the Netplay tab ("Bob (Adon): Connected") and the chat ("Bob (Adon): hi").
+Cleaned when set and again when received: letters, digits and ' ! ? . , : ( )
+_ - only, no spaces, 12 characters at most. Lobby names get the same
+characters (spaces kept, 24 at most) in the game, before sending and after
+the list comes, as in the Worker.
+
+The pak save doesn't hold names as text (the game's own character codes,
+and only for players who made a profile), so names are typed, not read from
+it.
+
+Test: 2 players, names "Wootbeer" and "Big<Head>&" + an accented letter + a
+control character + more, which came out "BigHeadTooLo"; in the Netplay tab
+and the chat; in sync (1423 frames). The screen checked at 4:3.
+
+## 2026-11-03, round 170: public games
+
+Players can find a game without swapping a code. The Host panel has Public
+(on or off) and a lobby name; a public host's /host carries public=1 and the
+name, and its polls the player count. The Worker keeps the public games in a
+second Durable Object, Directory (one for all), and answers /list?v=BUILD
+with those on the same build that aren't full, newest first, at most 20:
+"CODE<tab>PLAYERS<tab>NAME". An entry goes when the host closes its code
+(its game started, or it stopped hosting), when its game object expires, or
+30 s after its last refresh (every 10 s at most). The Join panel lists up to
+four, asking every 15 s while it's idle (and Refresh); a button joins by its
+code. Names: printable ASCII, 24 characters, in the game before sending and
+after receiving; the Worker keeps only letters, digits, spaces and
+'!?.,:()_- (and RmlUi's set_text escapes markup anyway). The joiner's lobby
+doesn't show the host's Start button.
+
+Needs the Worker deployed again (wrangler.toml: the Directory class, migration
+v2). Tested with wrangler dev: listed, other builds don't see it, the count
+updates, full ones drop out, closing removes it, private ones never show,
+markup stripped from a name; in the launcher a public host showed up on the
+other's list as "PaxDino game (1/4)" and its button joined (the host's
+settings came up to accept).
+
+## 2026-11-03, round 169: the Netplay screen laid out again
+
+The user found it cramped, the player list hard to find. Now: one line on
+what netplay is; two panels side by side, Host a game (port, Host, input
+delay, a hint) and Join a game (code or address, Join, a hint); a line for
+messages (a bad port, a failed join); and, while hosting or joining, a lobby
+panel: the join code large, the players a line each (Player 1: you (host),
+Player 2: ready / getting ready...), Start and Cancel, and beside them in
+smaller text how others reach the host, the delay and the settings on one
+line. Text 26 and 22 dp (was 20), large buttons, solid panels. The UI scales
+with the window's height, so the layout has to fit 1080 dp of height at any
+shape: checked at 16:9 (1280x720) and 4:3 (960x720), room left for four
+players; the panels wrap one above the other if a window is too narrow.
+
+## 2026-11-03, round 168: the Controller Pak screen's changes greyed out
+
+The user asked for the Controller Pak screen's options that change a pak to
+be greyed out in netplay, so nobody even tries. Greyed (flag 0x100, the way
+the trials are): Create Players (text 40), Copy Players (31), Delete Players
+(59) and Manage Controller Pak (48). Load Players (57) and Back (36) stay.
+The cursor skips the greyed items (Down goes Load Players, Back, Load
+Players). Round 167's guard (no more writes to this PC's file after a note
+is deleted in a session) stays as a second line.
+
+## 2026-11-03, round 167: Controller Paks in netplay, each player's own
+
+Until now netplay ran with no paks (neither PC's save could make the games
+differ). Now every player's own pak (player 1's .mpk on their PC, if the
+General tab gives player 1 a Controller Pak) goes to every PC in the lobby,
+so all the games boot with the same paks, each on its player's port, as a
+real N64 with a pak in each controller: unlocks, skins and trial progress
+from the saves (the host's Unlocks settings and cheats still on top), and
+2 Player Trials credit both players.
+
+- Lobby: Hello says whether the joiner brings one and its hash (FNV-1a 64).
+  The host pulls it in 256-byte chunks (PakAsk / PakData, 16 at a time
+  every 50 ms), and counts the joiner ready only once it's all there and
+  the hash holds. Start lists each port's pak (owner, hash); a joiner pulls
+  the ones it lacks from the host and only then starts its game. 32 KB a
+  player: a second or less on a LAN. Nothing is sent during play.
+- PAXDINO_NETPLAY's host now waits in start() until everyone is in, so the
+  paks are in place before its game boots.
+- In the session (trw::pak::begin_session) the paks are in memory only and
+  never read from disk again. Each PC writes back only its own player's, to
+  its own player 1 file, from what its own game did; the others' are never
+  written anywhere. Its file is copied to _pak1.mpk.netplay.bak first.
+- Safety: a received pak is only data the emulated game reads; it's checked
+  (size, hash, inode table) and the pak code bounds every access to the
+  image. Chunks are only taken for a pak this PC expects, from its owner
+  (the host) or the host (a joiner). The host drives the menus, so the main
+  menu's Controller Pak screen could delete a note on a joiner's pak: if
+  the game deletes a note from this PC's pak in a session, the file isn't
+  written again that session (the games carry on the same). Greying that
+  item (text 60, "CONTROLLER PAK") didn't hold: the game sets that item
+  itself. Mods stay off in a session (round 135), and only inputs and pak
+  images come from the others.
+- Text ids on the main menu, from the game's string table (0x80698160 +
+  4 * id): 6 Multiplayer, 24 2 Player Trials, 25 Options, 26 1 Player
+  Trials, 38 Player Stats, 60 Controller Pak (8 and 33, Frag Fest and Time
+  Trial, are hidden items).
+
+Tests (2 players, PAXDINO_NETPLAY): both with the same pak, "yes yes", to
+character select in sync (1731 frames); the joiner with none, "yes no", in
+sync (1803), nothing written in its folder; the joiner's pak different from
+the host's, in sync (1739), each folder's file unchanged and the joiner's
+backup made. Not tried: a save written during a session, the launcher's
+flow with join codes, Windows.
+
+## 2026-11-03, round 166: chat on Enter and T
+
+The user meant two keyboard keys, Enter and T (not Y, and nothing on a
+controller). The Chat defaults are now Enter and T, with no controller
+button (one can still be bound). Profiles saved with the first defaults
+(Enter and Y; Y on a controller) get the new ones once
+(trw::chat::update_profiles, marker chat_keys_v2); bindings changed by hand
+stay. A controller's Y is the game's again in netplay (C Left).
+
+Test (2 players): the saved profile moved to Enter and T, the controller's
+cleared; T opened the chat in a match and its letter wasn't typed; in sync
+(1271 frames).
+
+## 2026-11-02, round 165: the mirrored rows: the main menu's box, dimmed
+
+The user: the black box at the main menu's bottom left was back (round 6's,
+the same place). The main menu's background also stops at row 190, so round
+163 mirrored it too, and its hole at the bottom left ((18,128)-(85,201),
+filled by a patch the game draws, only above the mirror line) came out black
+in the mirrored rows. In the 4:3 area those rows now get copies shifted a
+third of the width each way under the mirrored one, as the bars do, so rock
+shows through. And as the user asked, the mirrored rows in the 4:3 area are
+dimmed like the bars (kBarShade), so they sit behind the game's own picture.
+
+Checked: main menu and loadout select, no box, the rows under the
+background dimmed.
+
+The far room's black doorway (round 153's video): the user saw the same in
+Original aspect, so it's the game's own.
+
+## 2026-10-29, round 164: Frag Tag's monkey face twice
+
+The user: in Frag Tag the monkey face that flashes while the monkey is
+picked still showed twice, top and bottom. It's drawn after the views, in
+the full-screen overlay, once inside each view. Now overlay rectangles lying
+wholly inside one view (not the clock, already moved; not while paused,
+when the pause list is in the middle) are that view's: moved like its HUD on
+this player's PC, left out (G_SPNOOP) on the others'.
+
+Test: 2 players, Frag Tag (Extra Modes on for the host), the face once in
+the middle of the host's screen while it became the monkey; in sync (1755
+frames).
+
+## 2026-10-29, round 163: menu backgrounds that stop short of the bottom
+
+The user: on the loadout screen (Expand) the rock doesn't reach the bottom.
+The game draws that background (also the character select's, level
+select's, match options' and Rumble Pak notice's) to row 190 of the menus'
+222, black under it, in Original aspect too; the bars copy the background's
+rows, so they stopped there as well and it showed more. In widescreen the
+rows under such a background are now filled with it mirrored about its
+bottom edge (the texture rectangles flipped: negative dtdy, starting at
+their last row), in the bars (shaded like them) and in the 4:3 area under
+the panels, so there's no seam. Backgrounds reaching the bottom are as
+before. Original aspect is unchanged.
+
+Checked in the sandbox: loadout, level select, match options and the Rumble
+Pak notice reach the bottom; the main menu unchanged.
+
+## 2026-10-29, round 162: characters in the Netplay tab and the chat
+
+The user asked for each player's character next to their name. In a match,
+the player's +0x5E0 is the character's number in the game's table of
+display names (17 pointers at 0x800D1FB4: TUROK 0, MANTID DRONE 1, ...,
+ADON 5, ELITE GUARD 7, ...): found by swapping two players' characters
+between two matches and checked with a third pair. Each sweep of a match the
+names are read from the game's table (title case: "Lord of the Dead") and
+kept per port (trw::controls::character_name), so the menus show the last
+match's.
+
+- Netplay tab: "Player 1 (Adon, host): This computer".
+- Chat: "Player 2 (Elite Guard): hi", the name as it was when the line came.
+
+Test: 2 players, Adon and Elite Guard, both shown; in sync (1807 frames).
+
+## 2026-10-29, round 161: How Many Players skipped
+
+The user still saw the count flip back and forth. Reproduced: once the
+steering pressed Left or Right, the count kept stepping round (3, 2, 1, 3...
+every two sweeps) with nothing pressed, so it never settled. With the
+steering off the screen behaves (1, 2, stays 2, back to 1).
+
+The screen is now skipped: each sweep on it the count is set in the
+screen's object (the word 8 bytes before the digit text, and the copy 12
+bytes after it; both move with Left and Right, found by RDRAM diffs) and the
+digit, Left and Right are taken out, and A is pressed for one sweep in
+eight until the screen goes. Setting only the first word wasn't enough:
+character select came up with one player. With both, it has two.
+
+That also explains the earlier "1 bot, can't reach 0" and Frag Tag tests: the
+matches were one player. Tests since round 157 that reached a match with the
+joiner idle were one-player matches too.
+
+Test: 2 players, character select with both players' panels, in sync (2119
+frames).
+
+## 2026-10-29, round 160: chat in matches only
+
+The user wants Enter only in matches, and nothing from the chat in the way
+of the settings. The Chat binding now opens the line only on the game's
+match screen (not paused, the HUD drawn: the same test as the controls'
+Screen::Game), set each sweep (trw::chat::set_allowed). In the front end,
+the pause menu and the fly-through the keys are the game's as before (Enter
+selects again), and the Chat binding's buttons aren't taken out of the read
+there. If the match pauses or ends while the line is open, it closes,
+keeping what was typed, and the key that found it closed goes nowhere.
+
+Test (2 players): menus by Enter as before; chat in the match; Escape,
+Escape, Escape to the pause menu, Enter there picks Resume. In sync (1987
+frames). Text typed on the character select went to the game as keys.
+
+## 2026-10-29, round 159: netplay chat
+
+A chat box at the left of the screen (src/main/chat.cpp), for netplay
+sessions only.
+
+- Opened by a new binding, Chat (lib-patches/RecompFrontend/0017 adds it to
+  the inputs, so it's in the Controls tab like the others): Enter and Y on
+  the keyboard, Y on a controller. Not while the menu (F1) is open, and the
+  line closes (keeping what's typed) if the menu opens over it.
+- While it's open every key, the mouse and the controller go to it, and this
+  PC's read is sent with nothing pressed. The key or button that opened it
+  doesn't reach the game either: the N64 buttons bound to the same key or
+  button are taken out of the read while it's held (Y is also C Left on a
+  controller). The Y that opens it isn't typed.
+- Enter sends. Escape clears what's typed, then closes the line; after that
+  Escape is the game's (pause) again. On a controller B is Escape and the
+  Chat button sends. Backspace, Ctrl+V. Steam's on-screen keyboard is asked
+  for when a controller opens it and Steam started the game.
+- Messages: printable ASCII only, no line breaks, up to 255 characters, ten
+  in any 30 seconds (then a note says how long to wait). Shown as "Player N:
+  text" for 12 seconds; while typing the last ten lines show.
+- Network: Chat packets carry the text where an Input's reads go. A
+  joiner's goes to the host, which shows it and passes it on to the other
+  joiners (at most 12 of a player's in 30 seconds); the host's goes to each
+  joiner. Each is resent every 250 ms until its ChatAck, and known by its
+  player and number so a repeat isn't shown twice.
+- In netplay Enter opens the chat everywhere, so in the menus it no longer
+  selects (E or a click do; Space or Escape on the title).
+
+Tests: 2 players on this machine. Markup and quotes show as typed, Escape
+then Escape, the 10-in-30 limit (the 11th and 12th held back), a reply from
+the joiner, typing during a match with W held (the player doesn't move).
+Both games stayed in sync (795 and 2027 frames).
+
+## 2026-10-29, round 158: netplay for up to four players
+
+The host now takes up to three joiners. It's a star: each joiner sends its
+input to the host, and the host passes it on to the others (resending the
+newest it has every send tick, so one lost packet doesn't hold anyone up).
+
+- Lobby: Hello carries a random joiner id, so a joiner that reached the
+  host on two addresses (STUN and local) still gets one slot; the host goes
+  by the id and keeps the address it last heard from. Welcome gives the
+  joiner its port (0 = full). Joiners send Ready every 250 ms; the host's
+  Start button is on once one is ready. Start carries the player count, the
+  input delay and the final settings (a joiner that took the settings from
+  an early Welcome desynced in a 3-player test: Look Spring).
+- Ports are packed when the game starts, so players are 1 to N with no gaps.
+- Drops: when the host loses a joiner, it marks that port dropped from the
+  sweep it had read up to, sends that in every packet, and every game gives
+  that port neutral input from there. If the host goes, joiners carry on
+  alone as before.
+- Auto input delay counts both hops (joiner to host to joiner) and half a
+  sweep when there are two or more joiners.
+- How Many Players and the connected controllers follow the session's
+  count; 2 Player Trials is greyed out with three or four players.
+- Own view: the clock seam is found from the lower views' tops, and thin
+  view border fills are dropped, for 3 and 4 player layouts.
+- Join codes: the Worker keeps up to three joiners and /poll returns a line
+  each. Needs `npx wrangler deploy` again.
+
+Tests (this machine, one display): 2 players 2231 frames in sync; 3
+players 3975; 4 players 1611, each view right. 3 players through the
+launcher with join codes (local Worker): the lobby list, Start, pings 90
+and 99 ms, Auto delay 5, in sync after. Not tried over the internet or on
+Windows.
+
+## 2026-10-29, round 157: Frag Tag's two views, and How Many Players again
+
+Round 155's "a press that didn't move the count ends the steering" gave up
+on the first press: the game ignores presses while the screen comes in. So
+every netplay match since was one player (the user's 0 bots, our 1 to 3:
+one player can't have none), and the Frag Tag tests of rounds 154 and 156
+weren't two-player at all. Now six presses in a row that don't move the
+count end it.
+
+With two players, Frag Tag (the user's Monkey Tag) fills the display list
+buffer to its end ("[NET] own view: no room left in the display list
+buffer (0 bytes free)"), so there was nowhere for the remade projections
+and the frame was left as the game drew it: both views. When the buffer's
+end is taken, the copies now go over the other views' own commands, which
+are jumped over: runs of eight top-level commands in a row in the buffer
+(not the first, where the jump is, and never the data the commands point
+at). Not enough of them: logged and left as drawn. Tested: two players, 0
+bots (the default), the host the monkey: each PC its own view before and
+after, no frame left, 2903 frames the same.
+
+## 2026-10-28, round 156: Frag Tag both views (not reproduced); a log for it
+
+User: in Frag Tag, whenever nobody is the monkey (the match's start too),
+both PCs show the game's own split, both views stacked; widescreen, default
+options. Here, 2-player netplay over 127.0.0.1, Frag Tag on Courtyard (the
+Gauntlet starts there too) with 1 and 3 bots (2 players can't have none):
+the own view throughout, before and after a monkey, and no frame that looked
+split was left as it was. The own view now logs such frames (a few a
+session, "[NET] own view: ..."): split viewports not laid out as one view
+after another (with each viewport's size, place, depth and projection), a
+display list it can't follow, or no room left in the buffer.
+
+## 2026-10-28, round 155: How Many Players kept pressing
+
+User's video: the other player gone, How Many Players stayed on 1 and the
+menu's sound repeated. The game doesn't step past the controllers it sees,
+so a press it refuses was sent again every 8 sweeps. Now a press that
+didn't move the count ends the steering until the screen opens again, and
+the target is the session's players (2). Tested here: the host killed at
+the main menu, the joiner alone opened How Many Players: one press, the
+count stays on 1, nothing more.
+
+## 2026-10-28, round 154: How Many Players in netplay
+
+How Many Players (front end screen 0x1A) is one item whose value Left and
+Right step from 1 to 4; the count is in the screen's object, 8 bytes before
+the digit its text shows (the screen stack's top entry holds the highlighted
+item; its item holds a bar and the text, whose string is at +0x38). In
+netplay player 1's read on that screen loses Left and Right and gets a press
+toward the session's players (2, or 1 once the other player is gone) every
+8 sweeps until the count matches, from the game's state on both PCs. The
+screen opens on 1; it's 2 a few reads later and stays there. Tested:
+Left and Right after it, still 2.
+
+The user saw both players' views at once in Frag Tag while a new monkey was
+picked. Not reproduced: a Frag Tag match here (the host made the monkey at
+the start) showed only the player's own view, and in four minutes neither PC
+logged a frame the own view gave up on (no split frame left as it was, no
+full buffer, no failed walk). Waiting on a capture.
+
+## 2026-10-28, round 153: netplay polish from the user's test
+
+- HUD text cut off at the top by a line (user's TV): the stretched HUD
+  sprites landed part way into a pixel, and a texture rectangle starts its
+  texture at its top edge, so part of the top row was lost. Stretched
+  texture rectangles are now on whole pixels (both edges rounded alike, so a
+  sprite's pieces still meet). The "100" has its round tops again.
+- The assault rifle's scope stretched tall (user's photo): the sights aren't
+  squashed in split screen, and only sprites drawn at exactly 1 by 1 kept
+  their size. Now any sprite as wide as high does, and where a sprite's
+  commands end is noted at its end (a hook at 0x002AAC24, on the drawn path,
+  in func_002AAB58) instead of guessing 0x100 bytes. The scope itself wasn't
+  seen here (the test loadouts don't have the rifle).
+- Sound: a stall (waiting for the other player) stopped the game's sound
+  and the music skipped. The last 8 ms of each chunk are held back; if the
+  queue nearly runs dry while netplay waits, they go out fading to silence,
+  and the next sound fades in.
+- Medals in Solo Matches: off for the session and no longer in the host's
+  settings shown to the joiner.
+- 1 Player Trials greyed out on the main menu during netplay (flag 0x100 on
+  its item and holder, text 26, as Player Stats is without a Controller
+  Pak); the highlight skips it.
+- The Netplay tab shows the other player's address only to a joiner who
+  typed it (not by join code, not to the host).
+- The host gone, the joiner couldn't do anything: the menus answer player
+  1's controller. Playing on alone as player 2, outside a match, this
+  player's input goes to player 1's port too. Tested: host killed at the main
+  menu, the joiner moved to Options and opened it.
+- 2667 frames the same in a match with all of it.
+
+The user's video of a far room black through a doorway until closer: a
+straight-edged black area that moves with the view, as the game's own
+culling of rooms seen through doorways. The user has seen it playing alone
+too, so it isn't netplay's; possibly widescreen showing more than the game
+culls for. Not fixed.
+
+## 2026-10-28, round 152: the join code service is up
+
+The Worker is deployed at https://paxdino-match.wootbeer.workers.dev and is
+now kMatchmaker. Checked live: a code, waiting, a join (the host's three
+addresses back, the third the address Cloudflare saw with the game's port),
+the joiner's on the next poll, a different build refused, close, and the
+code gone after. The sandbox's game got a code from it too.
+
+## 2026-10-28, round 151: UPnP
+
+Hosting now also asks the router to forward the UDP port (src/main/upnp.cpp):
+an SSDP search on the local network for an InternetGatewayDevice, its
+description for the WANIPConnection (or WANPPPConnection) service, then
+AddPortMapping for UDP, the same port outside and in, to this PC (a 2 hour
+lease, or none for routers that only take mappings that don't expire), and
+GetExternalIPAddress to say on the host's screen whether it worked. An
+outside address that's private (10/8, 172.16/12, 192.168/16, 100.64/10)
+means another router or the internet provider's NAT is in the way, and the
+screen says so. Cancel or closing the menu takes the mapping away again. With
+a mapping, the join code service's SEEN address (where the request came
+from, with the game's port) is the way in, and the address shown for joining
+over the internet works without port forwarding.
+
+Tested against a fake router (PAXDINO_UPNP=<description URL> skips the
+search): the lease refused, the permanent one taken, the outside address
+read, the screen's line, and DeletePortMapping on Cancel. The search itself
+needs a real router. Compiles for Windows with MinGW.
+
+## 2026-10-28, round 150: join codes, STUN and hole punching
+
+Joining took the host's address and a forwarded port. Now hosting also gets
+a six letter join code from a small Cloudflare Worker (tools/matchmaker,
+the free plan: one Durable Object per game, gone after 15 minutes), and the
+joiner can type the code in the same box as an address.
+
+The host's game asks a STUN server (Google's, Cloudflare's) on its own UDP
+socket what it looks like from the internet, and gives that, its address on
+its own network and its build to the Worker (/host). The Worker also notes
+the address the request came from with the game's port, for a forwarded
+port when STUN fails. The joiner does the same and gets the host's three
+(/join); the host asks every second who joined (/poll). Then the host sends
+Punch packets and the joiner Hellos to every one of the other's addresses,
+every 100 ms; the joiner takes the first to answer with a Welcome as the
+host. The code is closed once the session starts or hosting stops. The STUN
+request and the Worker's run on a thread of their own (the socket is that
+thread's until STUN is done); HTTPS is WinHTTP on Windows and the curl
+command elsewhere (src/main/http_get.cpp). On Windows, ICMP port
+unreachable from an address that doesn't answer no longer shows up as an
+error on the next receive (SIO_UDP_CONNRESET off).
+
+Not testable here: the sandbox has no UDP to the internet, so no real STUN
+or NAT. Tested with the Worker under wrangler dev and a fake STUN server
+(PAXDINO_STUN, with a padded attribute before XOR-MAPPED-ADDRESS): the code
+shown, the joiner trying an unreachable public address first and getting
+through on the local one, the prompt, 211 frames the same, the code closed,
+and a wrong code saying so. The Windows code compiles with MinGW
+(-fsyntax-only). The build has no Worker address yet (kMatchmaker): hosting
+then works as before, and a code says join codes aren't set up.
+
+## 2026-10-28, round 149: ping and Auto input delay
+
+The input delay was a fixed 3 controller reads. Now the host picks it in the
+Netplay screen: Auto (the default) or 1 to 8 reads, kept in online.txt.
+Ping and Pong packets carry a time and come back as they went; the joiner
+sends one every 100 ms while it reads the host's settings, and both send one
+a second during the game. Auto, worked out by the joiner when it accepts:
+half the median round trip, plus the 90th percentile's distance from the
+median (jitter), plus 8 ms, in reads of about 33 ms (the game reads the
+controllers about 60 times a second in menus and 27 to 45 in a sandbox
+match), from 1 to 8; 3 if no Pong came back. The Welcome carries the host's
+choice (0 Auto) and the Ready the delay settled on, which the host takes
+before the session starts. PAXDINO_NETDELAY's host sends its own as fixed.
+The joiner's prompt says which it is; the menu's Netplay tab shows the ping
+and the delay. Every 1800 reads the log has the game's pace and the ping, to
+check the 33 ms on real PCs.
+
+Round trips include waiting for the next frame on the other side (the
+launcher's frame in the lobby, the next read in the game), so the sandbox's
+slow renderer shows 20 to 60 ms over 127.0.0.1. Tested through the launcher
+on two displays: Auto picked 2 at a 55 ms round trip, the host's fixed 2
+was used as such, and 715 frames were the same.
+
+## 2026-10-28, round 148: own view drawn as one player's
+
+The user's screenshots of their own view: the clock cut off at the top, the
+gun big, the weapon wheel's icons pulled apart from their labels, the
+shotgun's sights stretched.
+
+The camera (func_00234FCC) picks its vertical angle as atan(h / aspect),
+the aspect 4:3 alone and 8:3 for a stacked view (0x800C319C-31A4), so a
+stacked view gets 60.8 degrees to one player's 74.4. Own view kept that
+projection's x scale and halved its y: a very wide picture, the gun's hidden
+lower half shown. Each projection in the view whose shape is the view's is
+now remade as one player's: the game's angle (the Field of View setting
+undone), atan(tan(angle) * 2), the setting again. The world's projection
+comes with the camera's turn in it, so its x and y scales are its columns'
+lengths. Other projections (the 47.5 degree one for the HUD's 3D skull) are
+left alone, which is how one player's are drawn.
+
+The HUD: in split screen the game draws its sprites (func_002AAB58) with y
+scale times 0.496, so they're squashed as well as placed closer; only the
+crosshair (751) stays 1 by 1. Pieces were moved by their centres, their
+sizes kept, so the wheel's spacing doubled while its pieces stayed half
+height. Now the HUD's rectangles are stretched with the view, their texture
+steps (the G_RDPHALF_2 after each G_TEXRECT) divided to match, and the
+sprite call notes where each sprite's commands start (kDlHead) and whether
+it was 1 by 1: the crosshair's rectangle keeps its size and its distance
+from the middle. The clock between the views is stretched too and placed as
+one player's (its digits 20 lines down). Compared with one player's frame
+the wheel, health, frags and clock land within a few lines.
+
+Tested over 127.0.0.1 in three levels, wheel open on both: 3943 frames the
+same. Not seen: the shotgun's sights (the test match's loadout didn't
+change weapons); either way they're drawn as one player's, stretched if the
+game squashed them, left as they are if it didn't.
+
+## 2026-10-28, round 147: settings audit for netplay; the audio target leak
+
+The games parted when the players' aspect ratios differed (frame 5), and
+also, from one run to the next at different frames, when a window was
+resized mid-session or the renderers ran at different speeds. The first
+word to differ was 0x800CB610, the audio thread's (0x00256C30) count of
+audio frames made: round 145's growing audio target was also the game's
+FIFO target in trw_osAiGetStatus, and it grows when the real device runs
+dry, so each PC's game made a different number of audio frames. In
+deterministic mode the target is two retraces again; the cushion of silence
+still follows the growing value, which only touches what's queued to the
+device. With it, three resizes mid-session: 2867 frames the same.
+
+Every setting checked for what it touches:
+- The renderer only (each player's own): bloom, screen filters, resolution,
+  MSAA, framerate, HUD ratio, volumes.
+- Input, before it's sent (each player's own): bindings, mouse, invert,
+  the menu cursor, look spring (per port).
+- The game's memory, so the host's: unlocks, cheats, the Enhancements game
+  options, the field of view, and now the aspect ratio: the widescreen
+  fixes add to the game's display lists and move its pointer into them
+  (kDlHead). ultramodern::renderer::set_aspect_ratio_override
+  (lib-patches/N64ModernRuntime/0006) holds the runtime's to the host's for
+  the session whatever the settings send, without changing them; the
+  joiner sees it in the host's settings.
+- The game's memory, fixed for the session: Clear Menu Panels on (the
+  user's call), Custom Music and Weapon Reverb off (reverb is in the
+  game's own synth: alSndpSetFXMix), the game's own crosshair.
+The shared and fixed options still shown (Aspect Ratio, Field of View,
+Clear Menu Panels, Weapon Reverb) are greyed out during a session.
+Tested over 127.0.0.1, host widescreen and joiner Original, Clear Menu
+Panels and Weapon Reverb different, main volume 100 and 40, both firing:
+2880 frames the same (and 2699, 2655 for the aspect ratio alone).
+
+## 2026-10-27, round 146: netplay pacing bug; session menu; mods off; build check
+
+- The game ran too fast in netplay (seen once the other player quit): the
+  retrace pacing (deterministic_vi_tick, lib-patches/N64ModernRuntime/0004)
+  computed `due` with the retrace count's unsigned type in it, so a retrace
+  not yet due came out far behind, was re-anchored to now and not slept
+  for. Paced only by the wait for the other player's input; alone, about
+  100 retraces a second. Now signed: 60 a second alone, measured. Probably
+  also behind the netplay crackle (audio arriving fast, dropped at the soft
+  cap).
+- During a session the menu's Enhancements, Unlocks, Cheats and Mods tabs
+  are hidden and a Netplay tab (F2) lists the players: this PC, the other's
+  address and Connected / Connection lost / Left the game, and the input
+  delay (trw::online_menu::use_session_menu, create_netplay_tab).
+- Mods are all off for the session, without touching mods.json
+  (recomp::mods::disable_all_mods_unsaved, lib-patches/N64ModernRuntime/0005),
+  just before the game starts.
+- The netplay version check includes the commit (TRW_BUILD_ID, from git at
+  configure time), so two test builds of the same version don't play.
+- The Modern preset's screen filter is Scanlines (was CRT): the CRT filter's
+  glow made the menus' bright text bloom, more on a TV.
+
+## 2026-10-27, round 145: audio buffer that grows when it runs dry
+
+The mini PC crackled in heavy scenes. The game is told the AI FIFO is full
+once two retraces of audio are queued (trw_osAiGetStatus, src/main/main.cpp),
+about 33 ms: a frame held up longer than that (the renderer behind, on a
+slower GPU) empties the queue. Now the target starts at two retraces and
+goes up by one each time the queue is found empty while the game is still
+making sound (a chunk within 250 ms of the last), to six (100 ms), and down
+by one after each minute without running dry; the headroom the game is
+given in its remaining-audio count follows it. In this sandbox (slow,
+software rendering) it went to six during boot; a fast PC stays at two.
+In deterministic mode (netplay) the game's audio is paced by its own
+retraces, kept in step with the other player, not by the device, so it
+reaches the queue unevenly and crackled on both PCs even on the title
+screen: there, a queue found under a retrace's worth is topped up with
+silence to max(4, target) retraces before the chunk. Two copies over
+127.0.0.1 in this sandbox: the queue found low in 6 of each 600 chunks,
+16 to 55 without the top-up.
+
+## 2026-10-27, round 144: Windows test PC: debug runtime, DPI, a DirectInput pad
+
+On a second Windows PC (a mini PC on a 4K TV):
+- The packaged exe wanted MSVCP140D.dll: build-release had been configured
+  as Debug (fmtd.lib, every object /MDd). tools/package-windows.ps1 now
+  starts a folder of another build type over, checks the type after
+  configuring, and refuses an exe that names a debug runtime.
+- Settings and the launcher were bigger than the screen and cropped: the
+  process wasn't DPI-aware, and at 350% Windows took the screen for about
+  1097 x 617 while the window was 1280 x 720. Now per-monitor DPI aware
+  (SDL_HINT_WINDOWS_DPI_AWARENESS), and the first window is two thirds of
+  the screen's height.
+- An 8BitDo Ultimate 2C on its dongle in DirectInput mode ("6 axis 16
+  button gamepad with hat switch", 030027fac82d00001b30...) wasn't used:
+  only pads SDL knows are. assets/gamecontrollerdb.txt (SDL_GameController
+  DB) now comes with the game, given to SDL before it starts
+  (SDL_HINT_GAMECONTROLLERCONFIG_FILE): added after SDL_Init, the pad was
+  known but had already been announced, and was never opened. The log names
+  each joystick and whether it's used. Works on that PC.
+- Defender removed the new unsigned exe until allowed; reporting builds to
+  Microsoft as false positives is the way for releases.
+
+## 2026-10-27, round 143: launcher on a TV
+
+On a TV the launcher looked crowded (a TV may crop the picture's edges) and
+the grain much stronger. The logo is 26% of the window's height (was 30%),
+centred at 19%; the menu's entries have 11 above and below (the frontend's
+16) and the menu sits 17% from the bottom (was 14%), so Start Game is at
+about half the height and Exit at about 80%. The grain is at 0.06 (was
+0.10) and the scanlines 0.32 dark (was 0.38), the same on every screen.
+
+## 2026-10-27, round 142: Netplay in the menu; the game's crosshair online
+
+The launcher's entry is Netplay (was Online Play), and Controls and Mods are
+gone from the menu: both only opened Settings at their tabs, which are still
+there. With two entries fewer the menu is back at 14% from the bottom.
+
+The crosshair is the game's own for both players during a session, whatever
+either PC's style (it was the host's): any other style skips the game's
+drawing of it, which has to match on both, and the host's Image style would
+have shown each player a picture of their own choosing, or one the host
+couldn't vouch for. The crosshair style is no longer in the shared settings.
+Tested over 127.0.0.1 with the host on Dot: the game's crosshair on both
+screens, 2759 frames the same.
+
+## 2026-10-27, round 141: netplay messages on screen
+
+A line over the game (src/main/online_menu.cpp, its own UI context, no
+input), from src/main/netplay.cpp:
+- "Waiting for player 2..." once the game has waited a second for the other
+  player's input, gone when it comes. The game sends no frames while it
+  waits, and RT64 presents only when the VI or the framebuffer changes, so
+  the screen is shown again every 100 ms: ultramodern::deterministic_present
+  (lib-patches/N64ModernRuntime/0004) queues a screen update, which the
+  renderer context (src/main/main.cpp) turns into
+  RT64Context::update_screen_held (lib-patches/RecompFrontend/0016): RT64
+  repeats its last workload and present while its debugger pauses, paused
+  for that call only, so no display list is skipped.
+- "Lost the connection to player 2. You're playing on without them." after
+  20 s without their input (10 s on screen).
+- "Player 2 left the game." when they quit: the game's quit (main.cpp,
+  before its _Exit, which runs no atexit handlers) sends Leave three times
+  (trw::netplay::shutdown); before, the other player waited out the 20 s.
+- The desync line for 20 s when the hashes differ.
+
+The retrace pacing (deterministic_vi_tick) catches up no more than 100 ms:
+after a wait it carries on from the time it is, where it used to run the
+missed retraces as fast as it could.
+
+Tested over 127.0.0.1: the joiner stopped (SIGSTOP) for 3 s, the message
+up and gone after, the games the same afterwards (2647 and 2791 frames);
+for 23 s, the lost line; a byte poked into the host's RDRAM, the desync
+line on both; the joiner's window closed and Quit, the left line on the
+host at once. Patches checked on a reset submodule (configure reapplies
+the set).
+
+## 2026-10-27, round 140: netplay crosshairs
+
+A crosshair style other than Game in a split screen: the crosshair
+overlay (src/main/crosshair.cpp) kept only the last batch of crosshairs the
+game drew between two colour buffers, and a split screen's come in
+different batches, so one player's was lost. Now each is kept (one within
+40 pixels of where it was is the same one) until 6 calls in a row go by
+without it. In netplay only this player's is drawn, moved as their view is
+(trw_own_view_place, src/game/own_view.cpp, from the last frame's view).
+
+The HUD's pieces in netplay's own view now move by their centre, not their
+top left (size kept): the game's crosshair at the view's centre was about 9
+pixels above the screen's centre; now on it, with the Dot style's too.
+Tested over 127.0.0.1: the host's Dot style and the Game style, both
+players' crosshairs on their screens' centres; 2659, 2723 and 2752 frames
+the same on both.
+
+## 2026-10-27, round 139: Online Play in the launcher; settings that split the games
+
+Online Play, after Start Game (src/main/online_menu.cpp): a UDP port and
+Host, the host's address (IP, or IP:port) and Join, a status line, Cancel.
+The host waits and is told its address on its own network (the one a UDP
+socket would reach the internet from) and, over the internet, to give its
+public address with the port forwarded; its settings for the session are
+listed. The joiner says Hello every 100 ms; the host answers with its
+settings (Welcome) and the joiner sees them in a prompt, Join or Cancel.
+Join sends Ready and starts the game the next launcher frame (from inside
+the prompt's own callback the UI contexts weren't hidden and the game
+didn't run); the host starts on Ready, or on the joiner's first input.
+Cancel sends Leave and the host goes back to waiting. No answer in 30 s, or
+a different build (the host answers a Hello it won't take with its own
+version), and the joiner is told why. The port and address are kept in
+online.txt in the config folder. PAXDINO_NETPLAY still works, for testing;
+deterministic mode is now set when a session begins (netplay.cpp), not at
+launch.
+
+The launcher menu has one more entry, which pushed Start Game under the
+logo's box (30% of the window's height, from 5% to 35%): the logo no longer
+takes clicks, and the menu sits at 10% from the bottom instead of 14%.
+
+Settings that split the games, found by giving the joiner's copy different
+ones and comparing the runs:
+- Clear Menu Panels: its hook skips the game's drawing of the panels'
+  lines (a menu object the game builds otherwise): now the host's.
+- Field of View: it's in the game's camera (the projection at 0x8013F1E8
+  and its fixed-point copy): now the host's.
+- Crosshair style: any but Game skips the game's crosshair sprite, whose
+  texture is then never loaded (a 6 KB block missing from the heap at the
+  match's start): the style is the host's; colour, size and opacity stay
+  each player's.
+- Custom Music: it gives the game's music player volume 0 once the file has
+  loaded (in real time): off for the session.
+- Randomize Game Music picked with std::random_device: in deterministic
+  mode its generator has a fixed seed, so both pick the same songs.
+- The host's settings were taken before the config loaded when started by
+  PAXDINO_NETPLAY (every option off), parting the games at the main menu;
+  that host now takes them when the joiner says Hello, as before.
+Bloom, resolution, screen filter and look spring differing: no difference.
+
+Tested over 127.0.0.1 with each copy on its own X display: Host, Join, the
+settings prompt, a two-player match; 2883, 2299 and 2819 frames the same on
+both, with the joiner's field of view, crosshair, bloom and resolution
+different, and with Randomize Game Music on. Cancel at the prompt and a
+join with nobody hosting give the messages above.
+
+This sandbox's software renderer (llvmpipe) can stall a copy's graphics
+thread when two copies start their games at once with the CRT filter at 2x
+resolution (in RT64's dummy frame before the game; it happens without
+netplay too), so the tests run the copies on separate displays without it.
+
+## 2026-10-27, round 138: netplay views paused, widescreen, the layouts
+
+Widescreen (Expand): each PC's view fills the wider screen, the HUD in
+place, as in round 137. Paused: the pause list is drawn in the overlay,
+around the middle of the screen, so the overlay's rectangles near the seam
+(the clock) aren't moved up while paused (0x801407D4).
+
+The 2 Player Layout option (Options): its byte is 0x80140227 (0 Horizontal,
+1 Vertical; found toggling it with RDRAM dumps at the main menu before and
+after). Vertical cut out of a side-by-side frame showed the right third of
+the world culled and the HUD's digits spread apart. Since each PC shows one
+view full screen, the layout only changes how that view is cut out, so
+netplay keeps the byte 0 at every controller sweep, on both PCs
+(keep_horizontal_layout, src/main/fps_controls.cpp). Tested: the byte set
+to 1 on both before a two-player match, both views came out as Horizontal,
+no difference reported.
+
+## 2026-10-27, round 137: netplay, each PC its own player's view
+
+src/game/own_view.cpp, from the renderer's send (src/main/main.cpp) in
+netplay. A split-screen frame, as the game builds it: at the display list's
+top level, per player a projection load and a viewport over its part of the
+screen (two players stacked: scale 240,89, translate 240,89 and 240,267 at
+480x360, scissors rows 0-178 and 178-357), then the world, the weapon and
+that player's HUD; after the last view a projection and the full-screen
+viewport for what goes over everything (the match clock, on the seam).
+
+The other player's view: its projection load becomes a branch to the next
+view's (all at the top level, so nothing on the call stack is skipped).
+This PC's: its viewport command points at the game's full-screen one, its
+scissor is opened to the screen, each projection it loads is copied (to
+the last 0x400 bytes of the display list buffer, unused) with the x and y
+columns scaled by the view's size over the screen's (the y column by 89/180
+stacked: the game's projections include the camera, scales 0.639 and 1.704,
+8:3), and its HUD's rectangles move to the same place on the screen,
+keeping their size (a rectangle over the whole view, the colour and depth
+clears, covers the screen). The overlay's rectangles within 12 pixels of
+the seam (the clock) move to the top. Only the display list changes, never
+the game's memory.
+
+Tested: a two-player Gauntlet over 127.0.0.1, the host's window player 1's
+view and the joiner's player 2's, full screen and the right shape, the HUD
+in place, the clock at the top; 3651 frames the same on both. Not tried
+yet: the side-by-side layout, widescreen, more than two players.
+
+## 2026-10-27, round 136: a two-player netplay match
+
+The game offers as many players as controllers it finds (osContInit's
+device info): in netplay both PCs report a controller on ports 1 and 2 and
+no pak (src/main/main.cpp), and get_accessory answers None
+(src/main/game_config.cpp), so neither PC's Controller Pak save makes the
+games differ; they start the same, the host's unlock settings standing in
+for a save. The game then asks at boot (No Controller Pak Found): the host
+picks Continue Without Saving (A). Since then answered by itself
+(answer_pak_prompt, src/main/fps_controls.cpp): while the front end's
+screen is 0x1D in mode 0, player 1's read becomes Down, then A, every 24
+sweeps, counted from the game's state so both PCs press alike; the prompt
+went by at frame 40.
+
+Tested over 127.0.0.1: the host set How Many Players to 2; each picked a
+character and a loadout on their own panel; the joiner's presses on the
+level select did nothing; the host started a Gauntlet match, and both
+players moved in the split screen. 4999 frames the same on both (881 in
+the match), no difference reported.
+
+## 2026-10-27, round 135: netplay settings, per-player controls
+
+The settings that change what the game does are the host's for the session
+(src/main/shared_settings.cpp): the joiner says Hello before its game
+starts, the host answers (Welcome) with them, and the joiner uses them for
+the session without saving (its own stay as they are); the list goes to the
+log, for the join screen later. Shared: All Levels, All Characters, All
+Weapons, Extra Modes, All Skins, Unlimited Ammo, Infinite Health, Moon
+Jump, Rapid Fire and Semi-Auto, Infinite Time, Medals in Solo Matches, All
+Music, Demo, Loadout Restrictions. Picture and sound options stay each
+player's, and so do the controls: bindings, sensitivity and invert apply
+before the input is sent, and Look Spring Override is each player's own on
+their port (the joiner's goes in its Hello; both PCs use the same set). The
+game's own 30 frames a second in the deterministic mode (no 60 fps logic),
+and packets carry a hash of the version, so different builds don't play.
+
+The sync hashes now leave out what the renderer writes back on its own time
+(the framebuffers at 0x80500000 and the depth buffer after them, the area at
+0x80700000 drawn before the first frame) and the display list buffers,
+which carry each player's picture options: one run showed only the depth
+buffer differing for a few frames in a match.
+
+Tested: the joiner with every cheat on, Energy weapons and its own look
+spring, the host with none and Bullet: 1903 and 1871 frames the same.
+
+Each PC's input reaches only its own player: in netplay only this PC's
+player 1 controls are read (its other players' bindings and devices not at
+all), for its own port; from the network only the other player's port is
+taken, and once connected only packets from the other player's address and
+port count (input only after the Hello).
+
+The host drives the menus (host_drives_menus, src/main/fps_controls.cpp):
+every other player's read is filtered from the game's state, the same on
+both PCs. In the front end it counts only on character select and loadout
+select (each picks their own); in a match all but Start (only the host
+pauses); nothing while paused. The front end's screen is func_00299898's
+answer (*0x80144E18, or the top of the screen stack at *0x80144E00): 3 the
+main menu, 0x1A how many players, 7 character select, 8 loadout select,
+0x14 level select, 0x15 the match's options, 0x19 the Rumble Pak notice.
+Tested: the joiner's Return, Down and Return left both games on the title;
+the host's two Returns took both to How Many Players; 1007 frames the same.
+
+## 2026-10-26, round 134: netplay, first version
+
+src/main/netplay.cpp. PAXDINO_NETPLAY=host:<udp port> (player 1) or
+join:<address>:<udp port> (player 2) runs the game in the runtime's
+deterministic mode. At each sweep of the game's controller reads (at port
+0's call), this PC's player's read (its own controls, as player 1's, the
+controls' extras included) is sent for the sweep PAXDINO_NETDELAY on (3 by
+default) and the other player's for this sweep is waited for (log after
+0.5 s; after 20 s without it the game carries on without them). Packets
+repeat the last 16 sweeps (no acknowledgements needed). Every 120 sweeps
+both send a hash of RDRAM (trw_sync_rdram_hash, the sync test's, after the
+running tasks finish); a difference is logged with its sweep.
+
+For two mice the controls' mouse aim and weapon pick state is per port; a
+boot screen skip is made as the read reaches the game (apply_read_extras);
+the paused wheel hold runs once a sweep on both PCs.
+
+Tested on one machine (host and joiner over 127.0.0.1, each writing a sync
+file): boot to the title, 2907 frames the same; the host keying into a
+match and moving, jumping and turning with the mouse, 1847 frames (765 in
+the match) the same on both.
+
+Not yet: the joiner's player in a match (a two-player setup), each PC
+showing its own player's view, settings sync at connect (options that
+change the game must match), a Host/Join screen, NAT.
+
+## 2026-10-26, round 133: input record and replay
+
+src/main/input_record.cpp: PAXDINO_INPUTREC=<file> writes what each
+controller read hands the game (port, answered, buttons, stick) and
+PAXDINO_INPUTPLAY=<file> plays it back instead of the live input. With the
+sync test on, a run that keys through the menus into a match and moves,
+jumps and turns, and its replay, hash the same every frame (2355 frames;
+frame 0's framebuffer aside, the renderer's first clear).
+
+What the controls decide outside the buttons and stick goes with the read
+in the deterministic mode (trw::inputrec::Extras): the mouse's turn, taken
+at the read in radians (sensitivity and invert applied) and applied per
+port at the next frame's camera, instead of the pending motion at the
+camera; whether the mouse aims the port's player (trw_look_pitch_target);
+a weapon pick in progress (trw_wheel_hidden); a boot screen skipped. A
+replay sets them from the record. The wheel held through the pause runs at
+the same point in both. Still local and not in the stream: options that
+change the game (Look Spring Override, cheats, Loadout Restrictions,
+medals...) have to be the same on every machine.
+
+## 2026-10-26, round 132: a deterministic runtime (netplay groundwork)
+
+Lockstep netplay needs two PCs given the same input to run the game the
+same way. Sync test (src/game/sync_test.cpp, PAXDINO_SYNCTEST=<file>):
+RDRAM hashed in 64 KB chunks each frame, the frame step fixed at two
+retraces; PAXDINO_SYNCDUMP=<frames> saves whole RDRAM there;
+tools/sync_compare.py finds the first frame and chunks that differ. Test:
+boot with no input into the attract demo, twice.
+
+What differed, in order:
+- Screens timed on osGetTime/osGetCount (18 and 2 calls): half the boots
+  were at another screen (320x240 against 480x360 buffers) by frame 10.
+- Events from the runtime's own threads (retraces, RSP and display list
+  completions, controller reads) were handed to whichever game OS call
+  came next, so the game's threads interleaved by host timing.
+- Audio: the runtime's remaining-bytes count and our trw_osAiGetStatus
+  (src/main/main.cpp) read the audio device, which drains in real time; the
+  audio thread made more or fewer frames (its counter, 0x800CB610).
+- Hashes taken while an RSP task or display list ran on another thread.
+- The runtime's host pointer in each OSThread (+0x18 past the game's
+  fields), different every run: masked (the game's nine threads).
+
+lib-patches/N64ModernRuntime/0004-deterministic-mode.patch:
+ultramodern::set_deterministic(true) (src/main/main.cpp, with the sync
+test). External events reach the game only at its idle point (all game
+threads waiting: run_next_thread, pause_self); there the RSP tasks and
+display lists still running are waited for (no game time), what was raised
+is handed over in a fixed order (PI, SI, SP, DP, AI, VI), and with nothing
+raised the game's time moves on one retrace (VI and AI messages, the VI
+swap and screen update), paced to the host's clock but never skipped. The
+CPU counter is retraces x 781250; audio queued drains a retrace's worth per
+retrace. The VI thread stands down once the game has started. The sync
+test waits for running tasks before hashing.
+
+Result: two runs, 4951 frames (boot, front end, the attract demo's match),
+the same every frame.
+
 ## 2026-10-26, round 131: mouse look's kept player
 
 Issue 7 on 0.1.5: the same crash as the reporter's 0.1.3 one, the allocator

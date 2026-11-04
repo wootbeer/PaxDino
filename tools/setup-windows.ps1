@@ -41,7 +41,12 @@ $buildDir = switch ($Preset) {
 # Ninja, CMake) plus the bundled clang-cl.
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path $vswhere)) { throw "Visual Studio not found (no vswhere.exe) -- see BUILDING.md." }
-$vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+# The newest install with both the C++ tools and clang-cl: with more than one
+# (Build Tools beside the IDE, say), the newest alone may lack clang-cl.
+$vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 Microsoft.VisualStudio.Component.VC.Llvm.Clang -property installationPath
+if (-not $vsPath) {
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+}
 if (-not $vsPath) { throw "No Visual Studio install with the C++ tools found -- see BUILDING.md." }
 if ($env:VSCMD_ARG_TGT_ARCH -ne "x64") {
     & (Join-Path $vsPath "Common7\Tools\Launch-VsDevShell.ps1") -Arch amd64 -HostArch amd64 -SkipAutomaticLocation | Out-Null

@@ -474,6 +474,13 @@ func = "func_002AAB58"
 before_vram = 0x002AAB58
 text = "    if (trw_crosshair_sprite(rdram, ctx->r4, ctx->r6, ctx->r7, ctx->r29)) { ctx->r2 = 1; return; }"
 
+# Netplay's own view (src/game/own_view.cpp): where the sprite's commands
+# ended (drawn: v0 about to be 1).
+[[patches.hook]]
+func = "func_002AAB58"
+before_vram = 0x002AAC24
+text = "    trw_own_view_sprite_end(rdram);"
+
 # Enhancements tab: Randomize Game Music. func_0025E274(song) is the game
 # asking for a song (a match asks for 56 + a random 0-3 at its start); the
 # request may be swapped for another of the game's match songs.

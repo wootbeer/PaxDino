@@ -29,6 +29,9 @@ what's needed to run well on PC and the options in the settings.
   player on their own controller or the keyboard.
 - Settings: presets, bloom, screen filters, Look Spring Override, Weapon
   Reverb, custom music, crosshair, Loadout Restrictions, unlocks and cheats.
+- Online Play for two (not yet tried between two PCs): lockstep input over
+  UDP by direct IP, the runtime in a deterministic mode, each player's own
+  view full screen, the host's settings for both (STATUS.md rounds 129-141).
 - The co-op Frag Tag fix from the 1.1 cartridge.
 - Windows and Linux (AppImage) packages.
 
@@ -38,9 +41,9 @@ what's needed to run well on PC and the options in the settings.
 - **Pickup toggles for Loadout Restrictions.**
 - **HD textures.** RT64 can replace textures with packs matched by hash;
   the game's textures are stored uncompressed in the ROM.
-- **Online play.** Lockstep input sharing, as N64 emulator netplay does.
-  Needs the game to run deterministically on every machine (frame-locked
-  timing, no host-clock randomness). Big.
+- **Online play: getting through routers.** Online Play needs the host's
+  UDP port forwarded when playing over the internet; UPnP or hole punching
+  could do without.
 
 ## Known issues
 

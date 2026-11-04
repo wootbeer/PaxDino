@@ -66,7 +66,7 @@ namespace {
         graphics.update_option_value(gfx::msaa_option, e(modern ? modern_msaa(graphics) : static_cast<uint32_t>(Antialiasing::None)));
         graphics.update_option_value("bloom", e(modern ? trw::config::Bloom::Low : trw::config::Bloom::Off));
         graphics.update_option_value(gfx::hr_option, e(modern ? HUDRatioMode::Full : HUDRatioMode::Original));
-        graphics.update_option_value("screen_filter", e(modern ? trw::config::ScreenFilter::CRT : trw::config::ScreenFilter::None));
+        graphics.update_option_value("screen_filter", e(modern ? trw::config::ScreenFilter::Scanlines : trw::config::ScreenFilter::None));
         graphics.update_option_value("screen_filter_menus_only", modern);
         // After the filter: choosing one turns the panels on (extras_config.cpp).
         graphics.update_option_value("no_menu_scanlines", modern);

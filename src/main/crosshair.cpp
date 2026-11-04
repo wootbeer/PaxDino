@@ -28,9 +28,13 @@
 #include "elements/ui_image.h"
 #include "util/file.h"
 #include "trw_config.h"
+#include "trw_netplay.h"
 
 // stb_image's code is in RT64 (render/rt64_texture_cache.cpp).
 #include "stb/stb_image.h"
+
+int trw_own_view_place(float* x, float* y); // src/game/own_view.cpp
+void trw_own_view_sprite(uint8_t* rdram, float x_scale, float y_scale);
 
 namespace fs = std::filesystem;
 
@@ -324,20 +328,41 @@ namespace {
 
 void trw::crosshair::frame_start(bool in_match) {
     // This runs more than once a frame (at each colour buffer the game
-    // sets), so the crosshairs noted are kept until a few calls in a row
-    // have gone by without any.
-    constexpr int kEmptyCallsToHide = 6;
+    // sets), and a split screen's crosshairs can come in different calls, so
+    // each crosshair noted is kept (one near where it was is the same one,
+    // moved) until a few calls in a row have gone by without it.
+    constexpr int kCallsToHide = 6;
+    constexpr float kSameCrosshair = 40.0f;
     static Mark marks[kMaxCrosshairs];
+    static int ages[kMaxCrosshairs];
     static int count = 0;
-    static int empty_calls = 0;
-    if (pending_count > 0) {
-        std::copy(pending, pending + pending_count, marks);
-        count = pending_count;
-        empty_calls = 0;
+    for (int i = 0; i < count; i++) {
+        ages[i]++;
     }
-    else if (++empty_calls >= kEmptyCallsToHide) {
-        count = 0;
+    for (int p = 0; p < pending_count; p++) {
+        int slot = -1;
+        for (int i = 0; i < count && slot < 0; i++) {
+            if (std::abs(marks[i].x - pending[p].x) < kSameCrosshair && std::abs(marks[i].y - pending[p].y) < kSameCrosshair) {
+                slot = i;
+            }
+        }
+        if (slot < 0 && count < kMaxCrosshairs) {
+            slot = count++;
+        }
+        if (slot >= 0) {
+            marks[slot] = pending[p];
+            ages[slot] = 0;
+        }
     }
+    int kept = 0;
+    for (int i = 0; i < count; i++) {
+        if (ages[i] < kCallsToHide) {
+            marks[kept] = marks[i];
+            ages[kept] = ages[i];
+            kept++;
+        }
+    }
+    count = kept;
     pending_count = 0;
     if (!in_match) {
         count = 0;
@@ -370,24 +395,34 @@ void trw::crosshair::frame_start(bool in_match) {
         context.close();
         return;
     }
+    // Netplay: only this player's, moved as their view is (each PC shows its
+    // own player's view full screen).
+    Mark placed[kMaxCrosshairs];
+    int placed_count = 0;
+    for (int i = 0; i < count; i++) {
+        Mark mark = marks[i];
+        if (!trw::netplay::active() || trw_own_view_place(&mark.x, &mark.y)) {
+            placed[placed_count++] = mark;
+        }
+    }
     // The 480 x 360 screen in the window: the 4:3 picture, centred.
     float scale = std::min(window_w / kHudWidth, window_h / kHudHeight);
     float left = (window_w - kHudWidth * scale) * 0.5f;
     float top = (window_h - kHudHeight * scale) * 0.5f;
     for (int i = 0; i < kMaxCrosshairs; i++) {
         Image* image = images[i];
-        if (i >= count) {
+        if (i >= placed_count) {
             if (shown[i]) {
                 image->set_display(Display::None);
                 shown[i] = false;
             }
             continue;
         }
-        float size = kBaseSizeDp * settings.size * marks[i].scale;
+        float size = kBaseSizeDp * settings.size * placed[i].scale;
         float width = image_aspect >= 1.0f ? size : size * image_aspect;
         float height = image_aspect >= 1.0f ? size / image_aspect : size;
-        image->set_left((left + marks[i].x * scale) * 100.0f / window_w, Unit::Percent);
-        image->set_top((top + marks[i].y * scale) * 100.0f / window_h, Unit::Percent);
+        image->set_left((left + placed[i].x * scale) * 100.0f / window_w, Unit::Percent);
+        image->set_top((top + placed[i].y * scale) * 100.0f / window_h, Unit::Percent);
         image->set_width(width, Unit::Dp);
         image->set_height(height, Unit::Dp);
         image->set_opacity(settings.opacity);
@@ -493,17 +528,21 @@ void trw::crosshair::choose_image() {
 }
 
 // From the HUD sprite call (func_002AAB58): 1 to leave the game's crosshair
-// out (its place is noted for the new one).
+// out (its place is noted for the new one). In netplay every sprite is noted
+// for the player's own view (src/game/own_view.cpp).
 extern "C" int trw_crosshair_sprite(uint8_t* rdram, gpr image, gpr x, gpr y, gpr sp) {
+    uint32_t sx_bits = (uint32_t)MEM_W(0x10, sp);
+    uint32_t sy_bits = (uint32_t)MEM_W(0x14, sp);
+    float sx, sy;
+    memcpy(&sx, &sx_bits, sizeof(sx));
+    memcpy(&sy, &sy_bits, sizeof(sy));
+    if (trw::netplay::active()) {
+        trw_own_view_sprite(rdram, sx, sy);
+    }
     if ((uint32_t)image != kCrosshairSprite || !replacing.load()) {
         return 0;
     }
     if (pending_count < kMaxCrosshairs) {
-        uint32_t sx_bits = (uint32_t)MEM_W(0x10, sp);
-        uint32_t sy_bits = (uint32_t)MEM_W(0x14, sp);
-        float sx, sy;
-        memcpy(&sx, &sx_bits, sizeof(sx));
-        memcpy(&sy, &sy_bits, sizeof(sy));
         if (!(sx > 0.0f && sx < 8.0f)) sx = 1.0f;
         if (!(sy > 0.0f && sy < 8.0f)) sy = 1.0f;
         pending[pending_count++] = Mark{

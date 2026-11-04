@@ -119,14 +119,19 @@ it next to the exe, so run it from the build folder or the repo root.
 
 ## Release packages
 
-- **Windows:** `.\tools\package-windows.ps1 -Version 0.1.6-beta` gives
+- **Windows:** `.\tools\package-windows.ps1 -Version 0.1.7-beta` gives
   `dist\PaxDino-<version>-windows.zip`.
-- **Linux / Steam Deck:** `tools/package-linux.sh 0.1.6-beta` gives
+- **Linux / Steam Deck:** `tools/package-linux.sh 0.1.7-beta` gives
   `dist/PaxDino-<version>-linux.tar.gz` with an AppImage. It runs on systems
   with a glibc at least as new as the one it's built on, so build it on an
   older distro (or SteamOS's) for the widest reach.
 
 Both use their own build folder, so a dev build is left alone.
+
+Before a release, set `version_string` in `src/main/main.cpp` to the release's
+number (the launcher shows it, netplay names it to a player on another
+version, and the update check compares it with the latest GitHub release's
+tag, so tag releases `v<number>`).
 
 ## Regenerating the symbol file
 
@@ -142,3 +147,23 @@ python3 tools/make_syms_toml.py syms/functions.txt TurokRWSyms/turokrw.us.syms.t
 `find_functions.py` needs `rabbitizer` (`pip install rabbitizer`).
 `syms/spimdisasm_starts.txt` came from splat (`tools/splat.yaml`); rerun
 splat only to refresh it.
+
+## Test switches
+
+Environment variables for development; players never need them.
+
+| Variable | What it does |
+| --- | --- |
+| `PAXDINO_AUTOSTART=1` | Presses Start Game on the launcher by itself. |
+| `PAXDINO_SYNCTEST=<file>` | Runs in the runtime's deterministic mode and writes a hash of RDRAM each frame to the file (`tools/sync_compare.py` compares two). |
+| `PAXDINO_SYNCDUMP=N,M,...` | With the sync test: all of RDRAM at those frames, to `<file>.<frame>`. |
+| `PAXDINO_INPUTREC=<file>` / `PAXDINO_INPUTPLAY=<file>` | Records the controller reads the game gets, or plays a recording back. |
+| `PAXDINO_FRAMELOG=1` | Writes slow frames to `frametimes.log`. |
+| `PAXDINO_NETPLAY=host:<port>` or `join:<address>:<port>` | Netplay without the launcher. |
+| `PAXDINO_NETPLAYERS=<2-4>` | That host starts once this many players are in. |
+| `PAXDINO_NETDELAY=<reads>` | A fixed input delay for it. |
+| `PAXDINO_NICKNAME=<name>` | The nickname for it. |
+| `PAXDINO_MATCHMAKER=<url>` | Another join code service (for example `wrangler dev`'s). |
+| `PAXDINO_STUN=<address>:<port>` | Another STUN server. |
+| `PAXDINO_UPNP=<description URL>` | Skips the router search and uses that device (src/main/upnp.cpp). |
+| `PAXDINO_FAKE_DESYNC=<sweep>` | This PC's netplay hash reads as different from that controller read on, to see the desync messages. |

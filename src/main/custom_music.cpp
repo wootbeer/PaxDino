@@ -39,6 +39,7 @@
 #include "dr_flac.h"
 #include "dr_mp3.h"
 #include "dr_wav.h"
+#include "ultramodern/ultramodern.hpp"
 #define STB_VORBIS_HEADER_ONLY
 #define STB_VORBIS_NO_STDIO
 #define STB_VORBIS_NO_PUSHDATA_API
@@ -519,7 +520,8 @@ extern "C" int32_t trw_music_request(uint8_t*, int32_t song) {
         return song;
     }
     static int32_t last = -1;
-    static std::mt19937 pick_rng{ std::random_device{}() };
+    // Netplay (the runtime's deterministic mode): the same picks on both PCs.
+    static std::mt19937 pick_rng{ ultramodern::is_deterministic() ? 0x50584447u : std::random_device{}() };
     constexpr size_t count = sizeof(kMatchSongs) / sizeof(kMatchSongs[0]);
     int32_t pick = song;
     for (int tries = 0; tries < 8; tries++) {

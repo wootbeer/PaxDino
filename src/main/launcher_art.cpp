@@ -47,9 +47,9 @@ namespace {
     // The grit: dark scanlines (a 1-pixel-wide strip of rows, stretched
     // across) and a field of grain that jumps about every frame.
     constexpr int kScanlineRows = 1080 / 3;      // a line every 3 rows at 1080p
-    constexpr float kScanlineDarkness = 0.38f;
+    constexpr float kScanlineDarkness = 0.32f;
     constexpr int kGrainWidth = 960, kGrainHeight = 540; // 2 pixels a grain at 1080p
-    constexpr float kGrainStrength = 0.10f;
+    constexpr float kGrainStrength = 0.06f;
 
     std::vector<char> scanline_pixels() {
         std::vector<char> rgba(size_t(kScanlineRows) * 3 * 4, 0);
@@ -165,11 +165,13 @@ void trw::launcher_art::init(recompui::LauncherMenu* menu) {
     menu->remove_default_title();
     Image* logo = context.create_element<Image>(menu, "?/trw/launcher_logo");
     logo->set_position(Position::Absolute);
-    logo->set_top(20.0f, Unit::Percent);
+    logo->set_top(19.0f, Unit::Percent);
     logo->set_left(50.0f, Unit::Percent);
     logo->set_translate_2D(-50.0f, -50.0f, Unit::Percent);
-    logo->set_height(30.0f, Unit::Percent);
+    logo->set_height(26.0f, Unit::Percent);
     logo->set_width_auto();
+    // Its box reaches down to the menu's first entries: clicks go through.
+    logo->set_pointer_events(PointerEvents::None);
 
     start_time = std::chrono::steady_clock::now();
 }

@@ -8,7 +8,8 @@
 // own icons (tools/make_icons.py).
 //
 // Not done yet: no mod/texture-pack content types. The launcher menu is the
-// library's default one plus Add to Steam (launcher_init below).
+// library's default one, less Controls and Mods (tabs of Settings), plus
+// Netplay and Add to Steam (launcher_init below).
 
 #include <algorithm>
 #include <cstdio>
@@ -18,6 +19,7 @@
 #include <chrono>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 #include <filesystem>
@@ -36,6 +38,9 @@
 #include "SDL_syswm.h"
 #else
 #include "SDL2/SDL.h"
+#include <spawn.h>
+#include <unistd.h>
+extern char** environ;
 #endif
 
 #include "recompui/recompui.h"
@@ -53,7 +58,11 @@
 #include "librecomp/helpers.hpp"
 
 #include "trw_config.h"
+#include "trw_chat.h"
 #include "trw_controls.h"
+#include "trw_netplay.h"
+#include "trw_update.h"
+#include "trw_online_menu.h"
 #include "trw_steam.h"
 #include "trw_crosshair.h"
 #include "trw_launcher_art.h"
@@ -86,7 +95,7 @@ namespace trw {
 
 static const std::string program_name = "PaxDino: Rage Wars Recomp";
 static const std::u8string program_id = u8"trwrecomp";
-static const std::string version_string = "0.1.6";
+static const std::string version_string = "0.1.7";
 
 template <typename... Ts>
 [[noreturn]] static void exit_error(const char* fmt, Ts... args) {
@@ -129,10 +138,40 @@ SDL_Window* window = nullptr;
 static ultramodern::gfx_callbacks_t::gfx_data_t create_gfx() {
 
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+    // Windows: work in the screen's real pixels. Without this, at a display
+    // scale above 100% Windows stretches the window while the renderer's
+    // swap chain is sized in real pixels, and the picture can come out
+    // bigger than the screen and cropped (seen on a 4K TV).
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+
+    // The community controller list (assets/gamecontrollerdb.txt, from
+    // SDL_GameControllerDB), for pads SDL doesn't know itself (the 8BitDo
+    // Ultimate 2C in its DirectInput mode): only pads SDL knows are used.
+    // Given before SDL starts, so the pads already connected are announced
+    // as controllers; added after, they weren't, and went unused.
+    std::string controller_db = "assets/gamecontrollerdb.txt";
+    if (char* base = SDL_GetBasePath()) {
+        std::string beside = std::string(base) + controller_db;
+        SDL_free(base);
+        if (std::filesystem::exists(beside)) {
+            controller_db = beside;
+        }
+    }
+    SDL_SetHint(SDL_HINT_GAMECONTROLLERCONFIG_FILE, controller_db.c_str());
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC) != 0) {
         exit_error("Failed to initialize SDL2: %s", SDL_GetError());
+    }
+    fprintf(stderr, "[TRW] controller mappings from %s: %d known in all\n", controller_db.c_str(), SDL_GameControllerNumMappings());
+    // What SDL finds, for when a controller isn't picked up: only those
+    // it takes as game controllers are used.
+    for (int i = 0; i < SDL_NumJoysticks(); i++) {
+        char guid[64];
+        SDL_JoystickGetGUIDString(SDL_JoystickGetDeviceGUID(i), guid, sizeof(guid));
+        const char* name = SDL_JoystickNameForIndex(i);
+        fprintf(stderr, "[TRW] joystick %d: %s (%s)%s\n", i, name != nullptr ? name : "?", guid,
+            SDL_IsGameController(i) ? "" : " - not a known game controller, not used");
     }
     trw::controls::init();
 
@@ -172,11 +211,28 @@ static ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callba
     flags |= SDL_WINDOW_VULKAN;
 #endif
 
-    window = SDL_CreateWindow(program_name.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, flags);
+    // 16:9, two thirds of the screen's height (in real pixels, so not tiny
+    // on a 4K screen), at least 1280 x 720 where that fits.
+    int window_w = 1280, window_h = 720;
+    SDL_Rect usable;
+    if (SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.h > 0) {
+        window_h = std::max(720, usable.h * 2 / 3);
+        window_w = window_h * 16 / 9;
+        if (window_w > usable.w * 9 / 10) {
+            window_w = usable.w * 9 / 10;
+            window_h = window_w * 9 / 16;
+        }
+    }
+    window = SDL_CreateWindow(program_name.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_w, window_h, flags);
     if (window == nullptr) {
         exit_error("Failed to create window: %s", SDL_GetError());
     }
     set_window_icon(window);
+    // In front, with the keyboard: Windows can leave a new window behind
+    // others (Explorer's) when another had the focus meanwhile; the hint
+    // makes SDL take it.
+    SDL_SetHint(SDL_HINT_FORCE_RAISEWINDOW, "1");
+    SDL_RaiseWindow(window);
 
 #if defined(_WIN32)
     SDL_SysWMinfo wm_info;
@@ -193,6 +249,7 @@ static ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callba
 }
 
 void trw_place_early_text(uint8_t* rdram, uint32_t dl_address); // src/game/widescreen.cpp
+void trw_own_view(uint8_t* rdram, uint32_t dl_address, int view); // src/game/own_view.cpp
 
 // The renderer, with each display list's frame tagged for the view turning
 // (trw::controls::display_list_sent) and a match frame's early text put at
@@ -210,10 +267,24 @@ public:
     void send_dl(const OSTask* task) override {
         trw::controls::display_list_sent((uint32_t)task->t.data_ptr);
         trw_place_early_text(trw::controls::rdram, (uint32_t)task->t.data_ptr);
+        // Netplay: only this PC's player's view, full screen.
+        if (trw::netplay::active()) {
+            trw_own_view(trw::controls::rdram, (uint32_t)task->t.data_ptr, trw::netplay::local_port());
+        }
         inner->send_dl(task);
     }
     void send_dummy_workload(uint32_t fb_address) override { inner->send_dummy_workload(fb_address); }
-    void update_screen() override { inner->update_screen(); }
+    void update_screen() override {
+        // Netplay waiting for the other player: the last frame again, with
+        // the message over it (the game sends none of its own meanwhile).
+        auto* rt64 = trw::netplay::screen_held() ? dynamic_cast<recompui::renderer::RT64Context*>(inner.get()) : nullptr;
+        if (rt64 != nullptr) {
+            rt64->update_screen_held();
+        }
+        else {
+            inner->update_screen();
+        }
+    }
     void shutdown() override { inner->shutdown(); }
     uint32_t get_display_framerate() const override { return inner->get_display_framerate(); }
     float get_resolution_scale() const override { return inner->get_resolution_scale(); }
@@ -256,6 +327,14 @@ static constexpr uint32_t audio_headroom_vis = 2;
 static constexpr uint32_t audio_soft_cap_ms = 200;
 static constexpr uint32_t audio_hard_cap_ms = 500;
 
+// How much audio the game keeps queued, in retraces' worth: two to start
+// with (about 33 ms), one more each time the queue runs dry while the game
+// is making sound (a slow PC, or a heavy scene holding the game up for a
+// moment: a crackle), up to six (100 ms); one less after each minute
+// without running dry, so a one-off hitch doesn't keep the latency up.
+static std::atomic<uint32_t> audio_target_vis{ 2 };
+static constexpr uint32_t audio_max_target_vis = 6;
+
 static bool open_audio_device(uint32_t frequency) {
     std::lock_guard<std::mutex> lock(audio_mutex);
 
@@ -289,6 +368,36 @@ static std::atomic<int> ai_polls_without_audio{ 0 };
 static std::atomic<uint64_t> virtual_ai_queued_frames{ 0 };
 static std::chrono::steady_clock::time_point virtual_ai_start = std::chrono::steady_clock::now();
 
+// Netplay: a stall (waiting for the other player's input) stops the game's
+// sound, and the speakers would cut off mid-sound and start again with a
+// click. The last few milliseconds of each chunk are held back; if the queue
+// is about to run dry while netplay waits (trw_audio_waiting), they go out
+// fading to silence, and the sound after fades back in.
+static constexpr size_t kFadeMs = 8;
+static std::vector<float> held_tail;
+static bool faded_out = false;
+
+extern "C" void trw_audio_waiting() {
+    if (audio_device == 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(audio_mutex);
+    const size_t bytes_per_ms = game_frequency * audio_channels * sizeof(float) / 1000;
+    if (held_tail.empty() || SDL_GetQueuedAudioSize(audio_device) > 3 * bytes_per_ms) {
+        return;
+    }
+    size_t frames = held_tail.size() / audio_channels;
+    for (size_t i = 0; i < frames; i++) {
+        float gain = 1.0f - (float)(i + 1) / (float)frames;
+        for (int c = 0; c < audio_channels; c++) {
+            held_tail[i * audio_channels + c] *= gain;
+        }
+    }
+    SDL_QueueAudio(audio_device, held_tail.data(), static_cast<Uint32>(held_tail.size() * sizeof(float)));
+    held_tail.clear();
+    faded_out = true;
+}
+
 static void queue_samples(int16_t* audio_data, size_t sample_count) {
     ai_polls_without_audio = 0;
     if (audio_device == 0) {
@@ -310,12 +419,55 @@ static void queue_samples(int16_t* audio_data, size_t sample_count) {
     // what's actually queued (a dropped buffer mustn't move it on).
     auto queue = [&] {
         trw::music::mix(buffer.data(), sample_count / 2, game_frequency, scale * 32768.0f);
-        SDL_QueueAudio(audio_device, buffer.data(), static_cast<Uint32>(sample_count * sizeof(float)));
+        if (!ultramodern::is_deterministic()) {
+            SDL_QueueAudio(audio_device, buffer.data(), static_cast<Uint32>(sample_count * sizeof(float)));
+            return;
+        }
+        // Netplay: back in after a fade out, then the last kFadeMs held back.
+        size_t fade_frames = game_frequency * kFadeMs / 1000;
+        if (faded_out) {
+            size_t frames = std::min(fade_frames, sample_count / audio_channels);
+            for (size_t i = 0; i < frames; i++) {
+                float gain = (float)(i + 1) / (float)(frames + 1);
+                for (int c = 0; c < audio_channels; c++) {
+                    buffer[i * audio_channels + c] *= gain;
+                }
+            }
+            faded_out = false;
+        }
+        static std::vector<float> joined;
+        joined.assign(held_tail.begin(), held_tail.end());
+        joined.insert(joined.end(), buffer.begin(), buffer.begin() + sample_count);
+        size_t keep = std::min(joined.size(), fade_frames * audio_channels);
+        held_tail.assign(joined.end() - keep, joined.end());
+        size_t out = joined.size() - keep;
+        if (out > 0) {
+            SDL_QueueAudio(audio_device, joined.data(), static_cast<Uint32>(out * sizeof(float)));
+        }
     };
 
     std::lock_guard<std::mutex> lock(audio_mutex);
     const size_t bytes_per_ms = game_frequency * audio_channels * sizeof(float) / 1000;
     const size_t queued_bytes = SDL_GetQueuedAudioSize(audio_device);
+    // Run dry since the last chunk (not the first chunk, nor after the game
+    // went quiet for a while): keep more queued from now on.
+    static auto last_queue = std::chrono::steady_clock::time_point{};
+    static auto last_change = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    uint32_t target = audio_target_vis.load();
+    if (queued_bytes == 0 && last_queue != std::chrono::steady_clock::time_point{} &&
+        now - last_queue < std::chrono::milliseconds(250)) {
+        if (target < audio_max_target_vis) {
+            audio_target_vis = target + 1;
+            fprintf(stderr, "[TRW AUDIO] ran dry: keeping %u retraces of audio queued\n", target + 1);
+        }
+        last_change = now;
+    }
+    else if (target > 2 && now - last_change > std::chrono::seconds(60)) {
+        audio_target_vis = target - 1;
+        last_change = now;
+    }
+    last_queue = now;
     if (queued_bytes > audio_hard_cap_ms * bytes_per_ms) {
         printf("[TRW AUDIO] %zu ms queued, resyncing\n", queued_bytes / bytes_per_ms);
         fflush(stdout);
@@ -323,6 +475,19 @@ static void queue_samples(int16_t* audio_data, size_t sample_count) {
     }
     else if (queued_bytes > audio_soft_cap_ms * bytes_per_ms) {
         return;
+    }
+    // Netplay (the runtime's deterministic mode): the game's time keeps step
+    // with the other player's, not with the audio device, so its sound comes
+    // in unevenly. Running low (under a retrace's worth), the queue is topped
+    // up with silence to a cushion of four retraces or more (the target
+    // above): a short gap now and then instead of crackle.
+    const size_t bytes_per_vi = game_frequency / 60 * audio_channels * sizeof(float);
+    if (ultramodern::is_deterministic() && queued_bytes < bytes_per_vi) {
+        size_t cushion = bytes_per_vi * std::max<uint32_t>(4, audio_target_vis.load());
+        size_t pad = (cushion - queued_bytes) / (audio_channels * sizeof(float)) * (audio_channels * sizeof(float));
+        static std::vector<float> silence;
+        silence.assign(pad / sizeof(float), 0.0f);
+        SDL_QueueAudio(audio_device, silence.data(), static_cast<Uint32>(pad));
     }
     queue();
 }
@@ -358,8 +523,18 @@ static size_t queued_audio_frames() {
 // as full, and the audio thread waits for the next retrace instead.
 extern "C" void trw_osAiGetStatus(uint8_t*, recomp_context* ctx) {
     constexpr uint32_t AI_STATUS_FIFO_FULL = 0x80000000u;
-    size_t two_frames = game_frequency / 30;
-    bool full = queued_audio_frames() >= two_frames || ai_polls_without_audio >= 2;
+    // In the runtime's deterministic mode (netplay) the game's own count:
+    // how much audio it makes mustn't follow the audio device (the target
+    // grows when the device runs dry, which differs between PCs).
+    uint32_t target_vis = ultramodern::is_deterministic() ? 2 : audio_target_vis.load();
+    size_t target_frames = game_frequency * target_vis / 60;
+    // In the runtime's deterministic mode (netplay, the sync test) the queued
+    // audio is its own count, played a retrace's worth each retrace, not the
+    // audio device's, which drains in real time.
+    size_t queued = ultramodern::is_deterministic()
+        ? ultramodern::get_remaining_audio_bytes() / (audio_channels * sizeof(int16_t))
+        : queued_audio_frames();
+    bool full = queued >= target_frames || ai_polls_without_audio >= 2;
     if (!full) {
         ai_polls_without_audio++;
     }
@@ -372,7 +547,7 @@ static size_t get_frames_remaining() {
     }
     std::lock_guard<std::mutex> lock(audio_mutex);
     size_t queued_frames = SDL_GetQueuedAudioSize(audio_device) / (audio_channels * sizeof(float));
-    size_t headroom_frames = game_frequency / 60 * audio_headroom_vis;
+    size_t headroom_frames = game_frequency / 60 * std::max(audio_headroom_vis, audio_target_vis.load());
     return queued_frames > headroom_frames ? queued_frames - headroom_frames : 0;
 }
 
@@ -392,6 +567,15 @@ static void set_frequency(uint32_t frequency) {
 // Rumble Pak here; that only sets "something is plugged in" in the status
 // the game queries.
 static ultramodern::input::connected_device_info_t get_connected_device_info(int controller_num) {
+    // Netplay: a controller on each player's port, the same on every PC
+    // (no paks: get_accessory, src/main/game_config.cpp).
+    if (trw::netplay::active()) {
+        bool player = controller_num >= 0 && controller_num < trw::netplay::players_playing();
+        return ultramodern::input::connected_device_info_t{
+            .connected_device = player ? ultramodern::input::Device::Controller : ultramodern::input::Device::None,
+            .connected_pak = ultramodern::input::Pak::None,
+        };
+    }
     size_t ports = 1;
     if (!recompinput::players::is_single_player_mode()) {
         ports = std::max<size_t>(1, recompinput::players::get_number_of_assigned_players());
@@ -470,7 +654,9 @@ std::vector<recomp::GameEntry> supported_games = {
 }
 
 // --- Launcher menu --------------------------------------------------------
-// recompui's default options, with Add to Steam before Exit.
+// recompui's default options, with Netplay after Start Game and Add to Steam
+// before Exit; Controls and Mods are left to their tabs in Settings, so the
+// menu isn't crowded.
 namespace {
     // Add to Steam closes Steam first when it's running, which takes a few
     // seconds: that runs on its own thread, and the launcher's update callback
@@ -543,29 +729,114 @@ namespace {
 
     void launcher_init(recompui::LauncherMenu* menu) {
         trw::launcher_art::init(menu);
+        // PAXDINO_NETPLAY's session began before the UI was up.
+        if (trw::netplay::active()) {
+            trw::online_menu::use_session_menu();
+        }
         trw::crosshair::queue_previews(); // the Crosshair option's pictures
         const recomp::GameEntry& game = supported_games[0];
         recompui::GameOptionsMenu* options = menu->init_game_options_menu(
             game.game_id, game.mod_game_id, game.display_name, game.thumbnail_bytes, recompui::GameOptionsMenuLayout::Center);
-        // A little lower than the frontend's 25% from the bottom, clear of the
-        // logo, and no wider than it (the highlight spans the menu): the logo
-        // is 30% of the window's height (src/main/launcher_art.cpp), its
+        // Lower than the frontend's 25% from the bottom, clear of the logo,
+        // and no wider than it (the highlight spans the menu): the logo
+        // is 26% of the window's height (src/main/launcher_art.cpp), its
         // picture 913 x 528 with the drawing in about 90% of the width, in UI
-        // units of 1080 to the window's height.
-        options->set_bottom(14.0f, recompui::Unit::Percent);
-        options->set_width(1080.0f * 0.30f * 913.0f / 528.0f * 0.9f, recompui::Unit::Dp);
+        // units of 1080 to the window's height. Kept well inside the screen's
+        // edges, which a TV may crop.
+        options->set_bottom(17.0f, recompui::Unit::Percent);
+        options->set_width(1080.0f * 0.26f * 913.0f / 528.0f * 0.9f, recompui::Unit::Dp);
         recompui::update_game_mod_id(game.mod_game_id);
-        options->add_start_game_or_load_rom_option();
-        options->add_setup_controls_option();
-        options->add_settings_option();
+        // Entries a little slimmer than the frontend's (16 above and below).
+        auto slim = [](recompui::GameOption* option) {
+            option->set_padding_top(11.0f);
+            option->set_padding_bottom(11.0f);
+        };
+        slim(options->add_start_game_or_load_rom_option());
+        slim(options->add_option("Netplay", [] { trw::online_menu::open(supported_games[0].game_id); }));
+        slim(options->add_settings_option());
         trw::presets::add_launcher_option(options);
-        options->add_mods_option();
-        options->add_option("Add to Steam", on_add_to_steam);
-        options->add_exit_option();
+        slim(options->add_option("Add to Steam", on_add_to_steam));
+        slim(options->add_exit_option());
+    }
+
+    // --netplay (Leave Game in a session starts PaxDino again with it): the
+    // Netplay screen, once the launcher is up.
+    bool open_netplay_at_start = false;
+
+    // Leave Game: PaxDino again, on the Netplay screen, once this one has
+    // closed its session. The PAXDINO_NETPLAY test variables stay behind.
+    void start_again_on_netplay_screen() {
+#ifdef _WIN32
+        SetEnvironmentVariableW(L"PAXDINO_NETPLAY", nullptr);
+        SetEnvironmentVariableW(L"PAXDINO_AUTOSTART", nullptr);
+        wchar_t path[MAX_PATH * 4];
+        DWORD length = GetModuleFileNameW(nullptr, path, (DWORD)std::size(path));
+        if (length == 0 || length >= std::size(path)) {
+            return;
+        }
+        std::wstring command = L"\"" + std::wstring(path, length) + L"\" --netplay";
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        if (CreateProcessW(path, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
+            // This one has the focus: the new one may take it.
+            AllowSetForegroundWindow(process.dwProcessId);
+            CloseHandle(process.hThread);
+            CloseHandle(process.hProcess);
+        }
+#else
+        unsetenv("PAXDINO_NETPLAY");
+        unsetenv("PAXDINO_AUTOSTART");
+        std::error_code ec;
+        std::string self = std::filesystem::read_symlink("/proc/self/exe", ec).string();
+        if (ec || self.empty()) {
+            return;
+        }
+        char flag[] = "--netplay";
+        char* args[] = { self.data(), flag, nullptr };
+        pid_t child = 0;
+        posix_spawn(&child, self.c_str(), nullptr, nullptr, args, environ);
+#endif
     }
 
     void launcher_update(recompui::LauncherMenu*) {
         trw::launcher_art::update();
+        trw::online_menu::update();
+#ifdef _WIN32
+        // In front once the launcher shows (the start can take a while, and
+        // Windows hands the focus to what was clicked meanwhile).
+        static int frames_to_front = 10;
+        if (frames_to_front > 0 && --frames_to_front == 0 && window != nullptr) {
+            SDL_SysWMinfo wm_info;
+            SDL_VERSION(&wm_info.version);
+            if (SDL_GetWindowWMInfo(window, &wm_info)) {
+                HWND hwnd = wm_info.info.win.window;
+                HWND front = GetForegroundWindow();
+                DWORD front_thread = front != nullptr ? GetWindowThreadProcessId(front, nullptr) : 0;
+                DWORD own_thread = GetCurrentThreadId();
+                bool attached = front_thread != 0 && front_thread != own_thread && AttachThreadInput(front_thread, own_thread, TRUE);
+                BringWindowToTop(hwnd);
+                SetForegroundWindow(hwnd);
+                if (attached) {
+                    AttachThreadInput(front_thread, own_thread, FALSE);
+                }
+            }
+        }
+#endif
+        static int frames_to_netplay = 30;
+        if (open_netplay_at_start && --frames_to_netplay <= 0) {
+            open_netplay_at_start = false;
+            trw::online_menu::open(supported_games[0].game_id);
+        }
+        // PAXDINO_AUTOSTART (for testing): Start Game by itself, a second
+        // after the launcher is up.
+        static int frames_up = 0;
+        if (frames_up >= 0 && std::getenv("PAXDINO_AUTOSTART") != nullptr && recomp::is_rom_valid(supported_games[0].game_id) &&
+            ++frames_up > 60) {
+            frames_up = -1;
+            recomp::start_game(supported_games[0].game_id, {});
+            recompui::hide_all_contexts();
+        }
         // Local Multiplayer: last launch's players, once their controllers
         // are connected.
         static bool players_restored = false;
@@ -597,6 +868,11 @@ int main(int argc, char** argv) {
     }
 #endif
     std::set_terminate(report_unhandled_exception_and_abort);
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--netplay") {
+            open_netplay_at_start = true;
+        }
+    }
 
     recomp::Version project_version{};
     if (!recomp::Version::from_string(version_string, project_version)) {
@@ -606,6 +882,13 @@ int main(int argc, char** argv) {
 
     register_trw_overlays();
     trw::apply_theme();
+
+    // The sync test (src/game/sync_test.cpp) runs the game in the runtime's
+    // deterministic mode (lib-patches/N64ModernRuntime/0004).
+    if (const char* sync = std::getenv("PAXDINO_SYNCTEST"); sync != nullptr && sync[0] != '\0') {
+        ultramodern::set_deterministic(true);
+    }
+    // Netplay too, once a session begins (src/main/netplay.cpp).
 
     NFD_Init();
 
@@ -651,12 +934,14 @@ int main(int argc, char** argv) {
     recompui::config::create_controls_tab();
     recompui::config::create_sound_tab();
     trw::config::add_extra_tabs();
+    trw::online_menu::create_netplay_tab();
     // Last on the strip: there are no mods for this game yet.
     recompui::config::create_mods_tab();
     trw::presets::note_first_launch();
     recompui::config::finalize();
     trw::presets::apply_first_launch();
     trw::controls::update_controller_profiles(recomp::get_config_path());
+    trw::chat::update_profiles(recomp::get_config_path());
 
     // Read from the just-loaded config; takes effect on the next launch if
     // changed in the menu.
@@ -711,6 +996,16 @@ int main(int argc, char** argv) {
     recompui::register_launcher_init_callback(launcher_init);
     recompui::register_launcher_update_callback(launcher_update);
 
+    // Netplay (src/main/netplay.cpp): the game's version for the session, and
+    // PAXDINO_NETPLAY's (the joiner takes the host's settings before the game
+    // starts).
+#ifndef TRW_BUILD_ID
+#define TRW_BUILD_ID "unknown"
+#endif
+    // The commit too: two test builds of one version mustn't play together.
+    trw::update::set_current(version_string);
+    trw::netplay::start((version_string + " " + TRW_BUILD_ID).c_str());
+
     recomp::start({
         .argc = argc,
         .argv = argv,
@@ -728,6 +1023,10 @@ int main(int argc, char** argv) {
     });
 
     NFD_Quit();
+    trw::netplay::shutdown();
+    if (trw::online_menu::leaving_to_netplay_screen()) {
+        start_again_on_netplay_screen();
+    }
 
     // The game's threads are never joined by the runtime and may still be
     // blocked on (or spinning over) runtime state when recomp::start

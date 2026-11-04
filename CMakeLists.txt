@@ -139,6 +139,18 @@ target_sources(RecompiledFuncs PRIVATE ${FUNC_C_SOURCES} ${FUNC_CXX_SOURCES})
 # Main executable
 add_executable(PaxDino)
 
+# The commit built, for netplay's check that both players run the same build
+# (src/main/main.cpp). Read at configure time; the package scripts configure
+# each time.
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE TRW_BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if (NOT TRW_BUILD_ID)
+    set(TRW_BUILD_ID "unknown")
+endif()
+target_compile_definitions(PaxDino PRIVATE TRW_BUILD_ID="${TRW_BUILD_ID}")
+
 # The frontend (src/main), the game-specific fixes (src/game) and the
 # recompiled RSP audio microcode (rsp/, generated from the ROM).
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
@@ -262,7 +274,7 @@ if (WIN32)
     if (EXISTS ${CMAKE_SOURCE_DIR}/icons/app.res)
         target_link_libraries(PaxDino PRIVATE ${CMAKE_SOURCE_DIR}/icons/app.res)
     endif()
-    target_link_libraries(PaxDino PRIVATE SDL2 Winmm.lib Urlmon.lib)
+    target_link_libraries(PaxDino PRIVATE SDL2 Winmm.lib Urlmon.lib Ws2_32.lib Winhttp.lib)
 endif()
 
 # The game loads assets/ relative to the working directory. A copy beside the

@@ -32,7 +32,9 @@
 #include "librecomp/files.hpp"
 #include "recomp.h"
 
+#include "librecomp/game.hpp"
 #include "trw_config.h"
+#include "trw_pak.h"
 
 namespace {
     constexpr int kPageSize = 256;
@@ -164,7 +166,7 @@ namespace {
             uint16_t next = e.start_page;
             while (next != kInodeEof) {
                 int page = next & 0xFF;
-                if ((next >> 8) != 0 || page < kFirstDataPage || pages.size() >= kPages - kFirstDataPage) {
+                if ((next >> 8) != 0 || page < kFirstDataPage || page >= kPages || pages.size() >= kPages - kFirstDataPage) {
                     return {};
                 }
                 pages.push_back(page);
@@ -213,13 +215,29 @@ namespace {
     std::mutex pak_mutex;
     std::array<Pak, kMaxPorts> paks;
 
+    // Netplay: the session's paks are in `paks` from the start and never
+    // read again; only this PC's player's (`own_port`) is written, to its own
+    // file (player 1's), and not after the game deleted a note from it.
+    bool session = false;
+    bool session_pak[kMaxPorts] = {};
+    int own_port = -1;
+    bool own_locked = false;
+
     std::filesystem::path pak_path(int port) {
         std::filesystem::path save_path = ultramodern::get_save_file_path();
+        if (save_path.empty()) {
+            // Before the game starts (the netplay lobby): where the runtime
+            // will put it (saves/<game id>.bin, src/main/main.cpp's id).
+            save_path = recomp::get_config_path() / "saves" / "trw.n64.us.1.0.bin";
+        }
         std::u8string name = save_path.stem().u8string() + u8"_pak" + (char8_t)(u8'1' + port) + u8".mpk";
         return save_path.parent_path() / name;
     }
 
     void load_pak(int port) {
+        if (session) {
+            return;
+        }
         Pak& pak = paks[port];
         std::filesystem::path path = pak_path(port);
         std::ifstream file = recomp::open_input_file_with_backup(path, std::ios_base::binary);
@@ -244,7 +262,10 @@ namespace {
     }
 
     void save_pak(int port) {
-        std::filesystem::path path = pak_path(port);
+        if (session && (port != own_port || own_locked)) {
+            return;
+        }
+        std::filesystem::path path = pak_path(session ? 0 : port);
         std::filesystem::create_directories(path.parent_path());
         bool ok = false;
         {
@@ -466,6 +487,12 @@ extern "C" void osPfsDeleteFile_recomp(uint8_t* rdram, recomp_context* ctx) {
     }
     pak.commit_inodes();
     pak.set_dir(file_no, DirEntry{});
+    // Netplay: only the Controller Pak screen deletes notes, and the host
+    // drives the menus: this PC's file isn't written again this session.
+    if (session && port == own_port && !own_locked) {
+        own_locked = true;
+        fprintf(stderr, "[NET] a note was deleted from this player's Controller Pak: the file is left as it was\n");
+    }
     save_pak(port);
     ret(ctx, 0);
 }
@@ -639,4 +666,89 @@ extern "C" void trw_osMotorInit(uint8_t* rdram, recomp_context* ctx) {
         return;
     }
     ret(ctx, osMotorInit(rdram, (int32_t)mq, (int32_t)pfs, port));
+}
+
+// Also every note's page chain: each page inside the pak (chain() checks).
+bool trw::pak::valid_image(const std::vector<uint8_t>& image) {
+    if (image.size() != kPakSize) {
+        return false;
+    }
+    Pak pak;
+    memcpy(pak.data.data(), image.data(), kPakSize);
+    if (!pak.inode_table_valid(kInodePage)) {
+        if (!pak.inode_table_valid(kInodeBackupPage)) {
+            return false;
+        }
+        memcpy(&pak.data[kInodePage * kPageSize], &pak.data[kInodeBackupPage * kPageSize], kPageSize);
+    }
+    for (int file_no = 0; file_no < kDirEntries; file_no++) {
+        DirEntry e = pak.dir(file_no);
+        if (!e.empty() && pak.chain(e).empty()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool trw::pak::read_own(std::vector<uint8_t>& image) {
+    image.clear();
+    if (trw::config::get_accessory_setting(0) != trw::config::Accessory::ControllerPak) {
+        return false;
+    }
+    std::filesystem::path path = pak_path(0);
+    std::ifstream file = recomp::open_input_file_with_backup(path, std::ios_base::binary);
+    if (!file.good()) {
+        return false;
+    }
+    image.resize(kPakSize);
+    file.read(reinterpret_cast<char*>(image.data()), kPakSize);
+    if (file.gcount() != kPakSize || !valid_image(image)) {
+        image.clear();
+        return false;
+    }
+    return true;
+}
+
+void trw::pak::begin_session(const std::array<std::vector<uint8_t>, 4>& images, int own) {
+    std::lock_guard lock{ pak_mutex };
+    for (int port = 0; port < kMaxPorts; port++) {
+        session_pak[port] = valid_image(images[port]);
+        if (session_pak[port]) {
+            memcpy(paks[port].data.data(), images[port].data(), kPakSize);
+            // As load_pak does: the backup inode table if the first's is bad.
+            if (!paks[port].inode_table_valid(kInodePage)) {
+                memcpy(&paks[port].data[kInodePage * kPageSize], &paks[port].data[kInodeBackupPage * kPageSize], kPageSize);
+            }
+        }
+    }
+    own_port = own;
+    own_locked = false;
+    session = true;
+    if (own >= 0 && own < kMaxPorts && session_pak[own]) {
+        std::error_code ec;
+        std::filesystem::path path = pak_path(0);
+        std::filesystem::path backup = path;
+        backup += ".netplay.bak";
+        std::filesystem::copy_file(path, backup, std::filesystem::copy_options::overwrite_existing, ec);
+    }
+}
+
+bool trw::pak::session_has_profile(int port) {
+    constexpr uint32_t kGameCode = 0x4E525745; // "NRWE", Turok: Rage Wars (USA)
+    std::lock_guard lock{ pak_mutex };
+    if (!session || port < 0 || port >= kMaxPorts || !session_pak[port]) {
+        return false;
+    }
+    for (int file_no = 0; file_no < kDirEntries; file_no++) {
+        DirEntry e = paks[port].dir(file_no);
+        if (!e.empty() && e.game_code == kGameCode) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool trw::pak::session_has(int port) {
+    std::lock_guard lock{ pak_mutex };
+    return session && port >= 0 && port < kMaxPorts && session_pak[port];
 }

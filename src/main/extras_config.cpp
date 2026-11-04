@@ -10,6 +10,7 @@
 
 #include "recompui/config.h"
 #include "ultramodern/config.hpp"
+#include "ultramodern/ultramodern.hpp"
 #include "trw_crosshair.h"
 #include "trw_music.h"
 
@@ -119,6 +120,13 @@ void trw::config::add_graphics_options_after_aspect_ratio(recomp::config::Config
 
 void trw::config::add_graphics_options(recomp::config::Config& graphics) {
     graphics_options_added = true;
+    // The host's during a netplay session (src/main/shared_settings.cpp).
+    // Like the field of view, Clear Menu Panels and Weapon Reverb (the other
+    // shared settings still shown then: their tabs' others are hidden).
+    for (const std::string& id : { recompui::config::graphics::options::ar_option, field_of_view_id,
+                                   std::string("no_menu_scanlines"), std::string("weapon_reverb") }) {
+        recompui::config::set_option_disabled_while(id, [] { return shared_settings_in_use() != nullptr; });
+    }
 
     graphics.add_enum_option(
         screen_filter_id,
@@ -388,6 +396,14 @@ bool trw::config::get_option(Option option) {
     if (!tabs_added) {
         return false;
     }
+    if (const SharedSettings* shared = shared_settings_in_use()) {
+        // Clear Menu Panels: always on during a netplay session (it changes
+        // the game's memory, so it can't be each player's own).
+        if (option == Option::NoMenuScanlines) {
+            return true;
+        }
+        return (shared->options >> static_cast<int>(option)) & 1;
+    }
     const OptionRef& ref = option_refs[static_cast<int>(option)];
     // Looked up by id on each read (see game_config.cpp).
     return std::get<bool>(recompui::config::get_config(*ref.tab).get_option_value(ref.id));
@@ -417,7 +433,9 @@ trw::config::Bloom trw::config::get_bloom() {
 }
 
 bool trw::config::get_high_framerate() {
-    if (!graphics_options_added) {
+    // The runtime's deterministic mode (netplay, the sync test) keeps the
+    // game's own 30 frames a second, the same on every PC.
+    if (!graphics_options_added || ultramodern::is_deterministic()) {
         return false;
     }
     using ultramodern::renderer::RefreshRate;
@@ -433,6 +451,9 @@ float trw::config::get_field_of_view() {
     if (!graphics_options_added) {
         return 90.0f;
     }
+    if (const SharedSettings* shared = shared_settings_in_use()) {
+        return shared->field_of_view;
+    }
     return static_cast<float>(std::get<double>(recompui::config::get_graphics_config().get_option_value(field_of_view_id)));
 }
 
@@ -440,11 +461,19 @@ bool trw::config::get_weapon_reverb() {
     if (!tabs_added) {
         return false;
     }
+    // Off during a netplay session: it's in the game's own synth (the game's
+    // memory), and netplay keeps to the game's own sound.
+    if (shared_settings_in_use() != nullptr) {
+        return false;
+    }
     return std::get<bool>(recompui::config::get_config(sound_id).get_option_value("weapon_reverb"));
 }
 
 float trw::config::get_weapon_reverb_amount() {
     if (!tabs_added) {
+        return 0.0f;
+    }
+    if (shared_settings_in_use() != nullptr) {
         return 0.0f;
     }
     return static_cast<float>(std::get<double>(recompui::config::get_config(sound_id).get_option_value("weapon_reverb_amount")) / 100.0);
@@ -458,6 +487,9 @@ float trw::config::get_custom_music_volume() {
 }
 
 trw::config::WeaponRule trw::config::get_weapon_rule() {
+    if (const SharedSettings* shared = shared_settings_in_use()) {
+        return static_cast<WeaponRule>(shared->weapon_rule);
+    }
     if (!tabs_added) {
         return WeaponRule::All;
     }
@@ -469,8 +501,12 @@ trw::config::CrosshairSettings trw::config::get_crosshair() {
         return { CrosshairStyle::Game, CrosshairColor::Green, 1.0f, 1.0f };
     }
     const recomp::config::Config& enhancements = recompui::config::get_config(enhancements_id);
+    // Netplay: the game's own for both players (any other skips the game's
+    // drawing of it, which changes the game's memory, and Image would show a
+    // picture from either PC).
     return {
-        static_cast<CrosshairStyle>(std::get<uint32_t>(enhancements.get_option_value("crosshair_style"))),
+        shared_settings_in_use() != nullptr ? CrosshairStyle::Game :
+            static_cast<CrosshairStyle>(std::get<uint32_t>(enhancements.get_option_value("crosshair_style"))),
         static_cast<CrosshairColor>(std::get<uint32_t>(enhancements.get_option_value("crosshair_color"))),
         static_cast<float>(std::get<double>(enhancements.get_option_value("crosshair_size")) / 100.0),
         static_cast<float>(std::get<double>(enhancements.get_option_value("crosshair_opacity")) / 100.0),
