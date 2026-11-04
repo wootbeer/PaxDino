@@ -140,10 +140,11 @@ target_sources(RecompiledFuncs PRIVATE ${FUNC_C_SOURCES} ${FUNC_CXX_SOURCES})
 add_executable(PaxDino)
 
 # The commit built, for netplay's check that both players run the same build
-# (src/main/main.cpp). Read at configure time; the package scripts configure
-# each time.
+# (src/main/main.cpp): the last one that changed the code, so commits to the
+# docs alone don't keep players apart. Read at configure time; the package
+# scripts configure each time.
 execute_process(
-    COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
+    COMMAND "${GIT_EXECUTABLE}" log -1 --format=%h --abbrev=12 HEAD -- src include lib lib-patches patches third_party assets cmake CMakeLists.txt turokrw.us.toml aspMain.us.toml syms TurokRWSyms
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE TRW_BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if (NOT TRW_BUILD_ID)

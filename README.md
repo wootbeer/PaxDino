@@ -45,6 +45,35 @@ done once.
 Add a blank portable.txt in the application's folder to make it portable,
 if you want to save settings and saves locally.
 
+## Netplay
+Everyone needs the same PaxDino version and their own game file.
+
+**Host**
+1. Pick **Netplay** on the launcher and set **Your name**.
+2. Optional: turn on **Public** to list your game so anyone can join it.
+   **Unlock Everything** gives everyone all the levels, characters, weapons
+   and skins. It's on by default.
+3. Press **Host** and send the others the join code it shows.
+4. Press **Start** once everyone's in.
+
+**Join**
+1. Pick **Netplay** on the launcher and set **Your name**.
+2. Type the join code and press **Join**, or pick a game from **Public games**.
+
+**Playing**
+- The host runs the menus. Everyone picks their own character and loadout.
+- Chat: **T** in the menus, **T** or **Enter** in a match.
+- **F2** shows the players and their ping, and has **Leave Game**.
+- If the host leaves, you can keep playing and use the menus yourself.
+
+**If you can't connect**
+- The host can forward UDP port 47000 to their PC. The others then join
+  with the host's public IP instead of the code.
+- If the game keeps waiting for someone, the host can raise **Input delay**.
+
+Not used online: Controller Paks (saves), custom music, custom crosshairs and
+mods.
+
 ## Download
 Get the latest build from the [Releases](https://github.com/wootbeer/PaxDino/releases) page.
 - **Windows:** unzip it anywhere and run `PaxDino.exe`.

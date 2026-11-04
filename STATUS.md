@@ -5,6 +5,16 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-11-04, round 188: build ID from the code; plainer changelog
+
+Netplay's build ID (TRW_BUILD_ID, CMakeLists.txt) is the last commit that
+changed the code (git log -1 over src, include, lib, the patches, assets,
+cmake, the TOMLs and symbols), not HEAD: a README or changelog commit made the
+Linux and Windows release builds unable to play together. The 0.1.7 changelog
+is cut down to short lines in the user's voice (netplay's own fixes left out,
+it's new in this release), and the README has a Netplay section with how to
+host, join and play.
+
 ## 2026-11-04, round 187: Leave Game from the AppImage
 
 Inside an AppImage /proc/self/exe is the binary in its mount, which goes
