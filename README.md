@@ -19,6 +19,8 @@ included.** You need your own dump of the game to build or play this.
 - Mouse and keyboard controls in game menus.
 - Local multiplayer, up to 4 players, each with their own controller or the
   keyboard.
+- Online netplay, 2 to 4 players, each on their own PC with their own view:
+  join codes, public games and chat. Everyone needs the same PaxDino build.
 - Earn medals in bot matches.
 - Co-op Frag Tag trial bug fixed (needs the 1.0 USA ROM).
 - Classic and Modern settings presets.
@@ -80,6 +82,7 @@ See [BUILDING.md](BUILDING.md).
 Known:
 - Beta.
 - Linux and Steam Deck builds are experimental.
+- Netplay: Controller Paks (saves and profiles) aren't used online yet.
 
 Else:
 - Please see the "Issues" section in GitHub. Screenshots or a short video
