@@ -30,6 +30,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -295,6 +296,9 @@ namespace {
     // taken at the controller read, as part of the input (recorded and played
     // back with it), and each port's is applied at the next frame's camera.
     float read_turn_yaw[4] = {}, read_turn_pitch[4] = {};
+    // Outside deterministic mode: each port's stick turn, rad/s (stick_look),
+    // turned by each frame's time in camera_begin.
+    float stick_rate_yaw[4] = {}, stick_rate_pitch[4] = {};
     // The display list buffers the game builds frames in, by turns.
     constexpr uint32_t dl_head_addr = 0x8010A574;
     constexpr uint32_t dl_buffer_a = 0x806D2000;
@@ -344,6 +348,8 @@ namespace {
     // Per controller port: the player the mouse aims there (each player in
     // netplay may have a mouse), or 0.
     std::atomic<uint32_t> mouse_aims_player[4]{};
+    // The player whose pitch a controller's stick sets (stick_look), by port.
+    std::atomic<uint32_t> stick_aims_player[4]{};
 
     std::atomic<uint32_t> mouse_buttons{ 0 };
     // Buttons pressed since the last controller read, so a click shorter
@@ -1765,6 +1771,84 @@ static trw::inputrec::Extras take_read_extras(int port) {
     return extras;
 }
 
+// A controller's stick in a match, made more usable (Stick Sensitivity,
+// Controls tab). The game turns at a rate that climbs steeply with the stick
+// (measured at full speed: 0.44 rad/s at half, 1.6 at three quarters, 4 at
+// full), and with look spring off (Look Spring Override) it looks up and down
+// the same way, so a stick short of full tilt barely looks, and one resting a
+// little off centre drifts. Up and down: with the override on, the stick sets
+// the pitch itself, on a smoother curve, and the game's own looking gets no
+// stick (kStickAims keeps the pitch where it's put, as for the mouse).
+// Turning: the game's own, plus or minus a share of its curve when the
+// sensitivity isn't 100%. Made at the read, before it's sent, so every PC in
+// netplay gets the same; not while paused, in the weapon wheel or the team
+// select, which use the stick.
+static void stick_look(int port, float& x, float& y, uint32_t& flags, float& yaw_rate, float& pitch_rate) {
+    yaw_rate = pitch_rate = 0.0f;
+    if (port < 0 || port >= 4 || trw::controls::rdram == nullptr) {
+        return;
+    }
+    uint32_t player = match_live() ? player_on_port(port) : 0;
+    bool active = player != 0 && *guest_word(0x801407D4) == 0 && *guest_word(player + 0x11B4) == 0 &&
+        *guest_word(player + wheel_offset) == 0;
+    // The pitch kept as the stick leaves it all through the match (paused or
+    // in the wheel too, or the game's easing would take it back).
+    bool aims = player != 0 && trw::config::get_look_spring_override(port);
+    stick_aims_player[port].store(aims ? player : 0);
+    if (aims) {
+        flags |= trw::inputrec::kStickAims;
+    }
+    if (!active) {
+        return;
+    }
+    float sensitivity = trw::config::get_stick_sensitivity();
+    if (aims) {
+        // Full tilt 2.4 rad/s; a little centre zone so a resting stick stays.
+        constexpr float kLookFull = 2.4f, kLookCurve = 1.6f, kCentre = 0.1f;
+        float a = std::max(0.0f, (std::fabs(y) - kCentre) / (1.0f - kCentre));
+        // Stick up (+y) looks down, as the game has it.
+        pitch_rate = -std::copysign(kLookFull * sensitivity * std::pow(a, kLookCurve), y);
+        y = 0.0f;
+    }
+    if (sensitivity != 1.0f && x != 0.0f) {
+        // The game's turning rate (rad/s) by stick, as measured.
+        constexpr float kStick[] = { 0.0f, 0.2f, 0.35f, 0.5f, 0.65f, 0.75f, 0.85f, 0.95f, 1.0f };
+        constexpr float kRate[] = { 0.0f, 0.02f, 0.13f, 0.44f, 0.74f, 1.6f, 2.3f, 2.4f, 4.0f };
+        float a = std::min(std::fabs(x), 1.0f);
+        float rate = kRate[0];
+        for (size_t i = 1; i < std::size(kStick); i++) {
+            if (a <= kStick[i]) {
+                float t = (a - kStick[i - 1]) / (kStick[i] - kStick[i - 1]);
+                rate = kRate[i - 1] + t * (kRate[i] - kRate[i - 1]);
+                break;
+            }
+        }
+        yaw_rate = std::copysign((sensitivity - 1.0f) * rate, x);
+    }
+}
+
+// The stick's turn for one read, in deterministic mode (netplay): its rates
+// times the time a read takes, averaged over the last reads so the turn comes
+// in even steps (the reads are the game's frames there, 30 or 60 a second).
+static void stick_look_read(int port, float& x, float& y, trw::inputrec::Extras& extras) {
+    using clock = std::chrono::steady_clock;
+    static clock::time_point last_read[4];
+    static float read_seconds[4] = { 1.0f / 30.0f, 1.0f / 30.0f, 1.0f / 30.0f, 1.0f / 30.0f };
+    if (port < 0 || port >= 4) {
+        return;
+    }
+    clock::time_point now = clock::now();
+    if (last_read[port] != clock::time_point{}) {
+        float dt = std::clamp(std::chrono::duration<float>(now - last_read[port]).count(), 1.0f / 120.0f, 1.0f / 15.0f);
+        read_seconds[port] += (dt - read_seconds[port]) * 0.05f;
+    }
+    last_read[port] = now;
+    float yaw_rate, pitch_rate;
+    stick_look(port, x, y, extras.flags, yaw_rate, pitch_rate);
+    extras.yaw += yaw_rate * read_seconds[port];
+    extras.pitch += pitch_rate * read_seconds[port];
+}
+
 // A read as it's handed to the game (live, played back, or from netplay):
 // the state the hooks read set as the read left it, a boot screen skipped,
 // and the turn queued for the camera.
@@ -1774,6 +1858,7 @@ static void apply_read_extras(int port, const trw::inputrec::Extras& extras) {
     }
     uint32_t player = match_live() ? player_on_port(port) : 0;
     mouse_aims_player[port].store((extras.flags & trw::inputrec::kMouseAims) ? player : 0);
+    stick_aims_player[port].store((extras.flags & trw::inputrec::kStickAims) ? player : 0);
     if (extras.flags & trw::inputrec::kPicking) {
         picking_player[port].store(player);
     }
@@ -1821,6 +1906,7 @@ bool trw::controls::get_input(int player_index, uint16_t* buttons, float* x, flo
             else if (chat_allowed) {
                 local_buttons &= (uint16_t)~trw::chat::chat_held_buttons();
             }
+            stick_look_read(local, read.x, read.y, read.extras);
             read.buttons = local_buttons;
             trw::netplay::exchange(read, sweep_reads);
             stand_in_for_host(sweep_reads);
@@ -1854,7 +1940,18 @@ bool trw::controls::get_input(int player_index, uint16_t* buttons, float* x, flo
         ret = get_input_for_port(player_index, buttons, x, y);
         if (ultramodern::is_deterministic()) {
             extras = take_read_extras(player_index);
+            stick_look_read(player_index, *x, *y, extras);
             apply_read_extras(player_index, extras);
+        }
+        else if (player_index >= 0 && player_index < 4) {
+            // The stick's rates, turned by each frame (camera_begin): the
+            // reads come at the screen's refresh, not the game's frames.
+            uint32_t flags = 0;
+            float yaw_rate, pitch_rate;
+            stick_look(player_index, *x, *y, flags, yaw_rate, pitch_rate);
+            std::scoped_lock lock(turn_mutex);
+            stick_rate_yaw[player_index] = yaw_rate;
+            stick_rate_pitch[player_index] = pitch_rate;
         }
         trw::inputrec::record(player_index, ret, *buttons, *x, *y, extras);
     }
@@ -1968,7 +2065,8 @@ void trw::controls::camera_begin() {
         return;
     }
     log_camera_frame();
-    // Deterministic mode: each port's turn taken at its controller reads.
+    // Deterministic mode: each port's turn taken at its controller reads (the
+    // mouse's and the stick's).
     if (ultramodern::is_deterministic()) {
         for (int port = 0; port < 4; port++) {
             if (read_turn_yaw[port] == 0.0f && read_turn_pitch[port] == 0.0f) {
@@ -1981,6 +2079,24 @@ void trw::controls::camera_begin() {
             read_turn_yaw[port] = read_turn_pitch[port] = 0.0f;
         }
         return;
+    }
+    // Otherwise the sticks' turns at their rates, by this frame's time.
+    {
+        using clock = std::chrono::steady_clock;
+        static clock::time_point last_frame;
+        clock::time_point now = clock::now();
+        float dt = last_frame == clock::time_point{} ? 0.0f
+            : std::clamp(std::chrono::duration<float>(now - last_frame).count(), 0.0f, 0.1f);
+        last_frame = now;
+        for (int port = 0; port < 4 && dt > 0.0f; port++) {
+            if (stick_rate_yaw[port] == 0.0f && stick_rate_pitch[port] == 0.0f) {
+                continue;
+            }
+            uint32_t player = match_live() ? player_on_port(port) : 0;
+            if (player != 0) {
+                turn_player_radians(player, stick_rate_yaw[port] * dt, stick_rate_pitch[port] * dt);
+            }
+        }
     }
     // The player kept from the last controller read may be the last match's,
     // gone since it was quit (the camera is built while the next one loads).
@@ -2405,7 +2521,7 @@ extern "C" uint32_t trw_look_pitch_target(uint8_t* rdram, uint32_t player, uint3
     std::memcpy(&game_target, &target, sizeof(float));
     int port = -1;
     for (int p = 0; p < 4 && player != 0; p++) {
-        if (mouse_aims_player[p].load() == player) {
+        if (mouse_aims_player[p].load() == player || stick_aims_player[p].load() == player) {
             port = p;
         }
     }

@@ -23,6 +23,7 @@ namespace trw::inputrec {
     constexpr uint32_t kMouseAims = 1u << 0;  // the mouse aims this port's player
     constexpr uint32_t kPicking = 1u << 1;    // a weapon pick (wheel) in progress
     constexpr uint32_t kSkipBoot = 1u << 2;   // a press skips the boot screen
+    constexpr uint32_t kStickAims = 1u << 3;  // the stick sets this port's player's pitch (stick_look)
 
     // A recording is being played in place of the live input.
     bool replaying();

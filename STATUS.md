@@ -5,6 +5,53 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-11-07, round 190: stick look without the stutter
+
+The user: up and down with the override on was a little stuttery (the
+game's own, override off, smooth). Outside deterministic mode the stick's
+turn was made at each read and queued for the next frame, but the reads
+come at the screen's refresh, not the game's frames, so a frame got none,
+one or two reads' worth. stick_look now gives rates (rad/s); in local play
+the read only keeps them (stick_rate_yaw/pitch) and camera_begin turns each
+frame by its own time. In deterministic mode (netplay) the turn stays in
+the read, times the time a read takes averaged over the last reads
+(stick_look_read), so it comes in even steps (the reads are the game's
+frames there). Checked: each frame's step is the rate times the frame's time
+(here the frames alternate about 22 and 50 ms, llvmpipe, and the steps with
+them).
+
+## 2026-11-07, round 189: controller look (issue 14); Stick Sensitivity
+
+The report (wootbeer/PaxDino#14): with Look Spring Override on, a
+controller looks up and down very slowly and crawls to a stop; off, the
+speed is fine but the view springs back. Measured, stick forced to fixed
+values, look spring off: the game's rates climb steeply with the stick.
+Turning 0 below 0.2, 0.13 rad/s at 0.35, 0.44 at 0.5, 0.74 at 0.65, 1.6 at
+0.75, 2.3 at 0.85 to 0.95, 4.0 at full. Looking up and down 0.08 at 0.1, about
+0.6 to 1.1 from 0.35 to 0.95, 2.4 only at full. A real stick rarely reaches
+full, so looking runs several times slower than turning, a stick resting a
+little off centre drifts, and the game eases the pitch toward its look
+target, the crawl.
+
+stick_look (fps_controls.cpp), at the read, before it's sent: in a live
+match, not paused, in the weapon wheel (player +0x938) or the team select
+(+0x11B4), with the override on, stick y becomes a pitch change in the
+read's extras (2.4 rad/s at full, curve power 1.6, a 0.1 centre zone, times
+Stick Sensitivity; +y down, as the game has it) and y is zeroed. A new read
+flag, kStickAims, keeps the pitch where it's put in trw_look_pitch_target,
+as kMouseAims does, all through the match (dropping it while paused would
+let the easing pull the view back). Turning stays the game's; Stick
+Sensitivity other than 100% adds (sensitivity - 1) times the measured
+curve. Local play queues the turn for camera_begin, which now applies
+queued turns in both modes. Stick Sensitivity: Controls tab, 50 to 300%,
+default 100 (below 50 the game's own turn, which ramps up, could be
+outrun). Look Spring Override has a description now.
+
+Tested: forced stick, new path: up and down 0 at 0.05, 0.04 at 0.2, 0.31 at
+0.35, 0.57 at 0.5, 1.42 at 0.75, 2.4 at full, none at rest; turning at 100%
+as before; at 200% both about doubled. A netplay match with both players
+using the stick look: in sync (sync test, 2259 frames).
+
 ## 2026-11-04, round 188: build ID from the code; plainer changelog
 
 Netplay's build ID (TRW_BUILD_ID, CMakeLists.txt) is the last commit that

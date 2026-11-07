@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.1.8 Beta] - 2026-11-07
+
+### Added
+- Stick Sensitivity in Controls, for controllers
+
+### Changed
+- Look Spring Override says it's meant for mouse control
+
+### Fixed
+- With Look Spring Override on, looking up and down with a controller was
+  slow, drifted, and crawled to a stop after letting go
+
 ## [0.1.7 Beta] - 2026-11-04
 
 ### Added

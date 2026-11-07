@@ -4,6 +4,7 @@
 #include "trw_netplay.h"
 #include "trw_pak.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@ namespace {
     const std::string other_accessory_id = "other_accessory";
     const std::string local_multiplayer_id = "local_multiplayer";
     const std::string invert_mouse_y_id = "invert_mouse_y";
+    const std::string stick_sensitivity_id = "stick_sensitivity";
     const std::string menu_cursor_id = "menu_cursor";
     const std::string look_spring_override_id = "look_spring_override";
     const std::string player_assignment_id = "player_assignment";
@@ -101,13 +103,27 @@ void trw::config::add_general_options(recomp::config::Config& general) {
         true
     );
 
+    general.add_number_option(
+        stick_sensitivity_id,
+        "Stick Sensitivity",
+        "How fast a controller's stick turns and looks in a match. <b>100%</b> turns as the game does."
+        "<br/><br/>"
+        "With Look Spring Override on, looking up and down follows it too.",
+        50, 300, 5, 0, true, 100
+    );
+
     // Per player, each on its own player's page of the Controls tab (players
     // 2-4 with Local Multiplayer on); player 1's keeps the id the single
     // option had.
-    general.add_bool_option(look_spring_override_id, "Look Spring Override", "", true);
+    const std::string look_spring_text =
+        "<b>Intended for mouse control.</b> Keeps your aim where you put it instead of the game pulling it back to level."
+        "<br/><br/>"
+        "It can make gamepad aiming feel off. With a gamepad, you can turn it off and use the game's own Look Spring "
+        "option (in its Options) instead.";
+    general.add_bool_option(look_spring_override_id, "Look Spring Override", look_spring_text, true);
     for (int port = 1; port < 4; port++) {
         general.add_bool_option(look_spring_override_id + "_p" + std::to_string(port + 1),
-            "Look Spring Override", "", true);
+            "Look Spring Override", look_spring_text, true);
         general.add_option_hidden_dependency(look_spring_override_id + "_p" + std::to_string(port + 1), local_multiplayer_id, false);
     }
 
@@ -136,6 +152,7 @@ void trw::config::add_general_options(recomp::config::Config& general) {
     recompui::config::show_option_on_controls_tab(general_tab::id, menu_cursor_id);
     recompui::config::show_option_on_controls_tab(general_tab::id, general_tab::options::mouse_sensitivity);
     recompui::config::show_option_on_controls_tab(general_tab::id, general_tab::options::joystick_deadzone);
+    recompui::config::show_option_on_controls_tab(general_tab::id, stick_sensitivity_id);
     recompui::config::show_option_on_controls_tab(general_tab::id, invert_mouse_y_id);
     recompui::config::show_option_on_controls_tab(general_tab::id, look_spring_override_id, 0);
     for (int port = 1; port < 4; port++) {
@@ -149,6 +166,14 @@ bool trw::config::get_invert_mouse_y() {
         return false;
     }
     return std::get<bool>(recompui::config::get_general_config().get_option_value(invert_mouse_y_id));
+}
+
+float trw::config::get_stick_sensitivity() {
+    if (!options_added) {
+        return 1.0f;
+    }
+    double percent = std::get<double>(recompui::config::get_general_config().get_option_value(stick_sensitivity_id));
+    return (float)std::clamp(percent, 50.0, 300.0) / 100.0f;
 }
 
 bool trw::config::get_look_spring_override(int port) {

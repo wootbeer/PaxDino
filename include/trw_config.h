@@ -37,6 +37,10 @@ namespace trw::config {
     // off, the game's own look spring setting; on, no look spring, and mouse
     // look's pitch kept (src/game/extras.cpp, src/main/fps_controls.cpp).
     bool get_look_spring_override(int port);
+    // Stick Sensitivity (Controls tab): how fast a controller's stick turns
+    // and looks, 1.0 the game's own turning (src/main/fps_controls.cpp,
+    // stick_look). This PC's own: it applies before the input is sent.
+    float get_stick_sensitivity();
 
     // The Enhancements, Unlocks and Cheats tabs (src/main/extras_config.cpp).
     // Call after the built-in tabs, before recompui::config::finalize().
