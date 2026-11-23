@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.1.9 Beta] - 2026-11-23
+
+### Added
+- Command line: `--boot`, `--rom FILE`, `--host`, `--join CODE`, and any
+  setting for that run (`--help` lists them). See the README
+- Graphics API in Graphics (Windows): D3D12 or Vulkan, for the next start
+- A message when the graphics driver stops responding, instead of a crash
+- Crash logs also catch crashes that used to close the game without one
+- Restart button in the menu (and in the quit prompt)
+
+### Changed
+- New installs are portable: settings, saves and the ROM go in the game's
+  folder. Existing setups stay where they are
+
+### Fixed
+- The Linux builds of 0.1.7 and 0.1.8 closed as soon as the game started
+  (they were packaged without the audio microcode). 0.1.8's Linux download
+  is replaced with a fixed one
+- Netplay: a host can't change the match settings after you've joined
+
+Everyone in a netplay match needs 0.1.9.
+
 ## [0.1.8 Beta] - 2026-11-07
 
 ### Added

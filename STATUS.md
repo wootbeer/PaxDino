@@ -5,6 +5,161 @@ PROGRESS.md has the short version.
 
 # Log
 
+## 2026-11-23, round 196: Restart button
+
+Ported from snprecomp. `lib-patches/RecompFrontend/0020-restart-button.patch`
+(snprecomp's 0023, unchanged) adds a Restart button between Quit and Close
+in the menu header, and a Restart choice in the in-game quit prompt.
+`src/main/restart.cpp` sets the callback: it quits as Quit does, and just
+before the process ends (main's end, or the crash handler's quiet exit once
+quitting has started) starts the game again with the same command line.
+Windows: CreateProcessW with the same command line. Linux: posix_spawn of
+`$APPIMAGE` if set, else the real exe path (from /proc/self/exe; spawning
+/proc/self/exe itself names the new process "exe").
+
+Tested on Linux: the header button from the launcher and in-game, and the
+quit prompt's Restart. Each time a new PaxDino started with the same
+arguments, the old one exited, and no crash log was written. The user
+confirmed it works on Windows.
+
+## 2026-11-23, round 195: crashes that left no report
+
+Issue 7 (C-buttons, follow-up): Vulkan and High performance cleared their
+launch crashes. Still: with DS4Windows showing its virtual copies of the pad
+(SDL saw PS4 Controller twice, the DualSense and an Xbox 360 Controller),
+PaxDino closes at start; hiding the copies, or a mouse, is fine. trw_log.txt
+ends after the joystick list and crash_log.txt wasn't written (theirs was from
+11/19), so the crash filter never ran: an abort, the C runtime's
+invalid-parameter check, a pure virtual call, a stack overflow it had no room
+for, or a quit. Not reproducible here (no DS4Windows). recompinput's
+controller-added handler is null-safe; nothing of ours indexes controllers.
+
+So that the next log says which: on Windows SIGABRT, the invalid-parameter
+handler and the purecall handler raise exceptions of their own (0xE0545201-3)
+that the filter reports with the host stack (_set_abort_behavior off so
+Windows Error Reporting doesn't go first), and SetThreadStackGuarantee gives
+the main thread room for the filter after a stack overflow; on Linux SIGABRT
+is reported too. stdout is unbuffered when it goes to trw_log.txt (the
+libraries' "Controller added" lines were lost when the game died), and
+"[TRW] closed normally" is logged when recomp::start returns. Tested on
+Linux: kill -ABRT writes a crash_log ("abort() called", host stack); Exit
+logs the closing line.
+
+## 2026-11-19, round 194: GPU lost; portable by default; the command line
+
+**Issue 7 (new comment): a crash closing Settings.** Symbolized with the
+0.1.8 pdb: plume::setObjectName on a null texture, from
+RenderTarget::setupColor/resize on the Gfx thread. trw_log.txt had
+"CreateResource failed with error code 0x887A0005" (DXGI_ERROR_DEVICE_REMOVED):
+the driver reset or the GPU went away (a laptop with Intel and Nvidia GPUs,
+crashing at start too), and plume carries on with a null resource. Not the
+ortarecomp Intel fix (its own Vulkan renderer read the driver's pipeline cache
+while pipelines were made; RT64 and plume never use a driver pipeline cache).
+lib-patches/plume (new, applied in plume's own tree: the rt64 set's reset
+doesn't reach a nested submodule): plume::deviceLostCallback, called once from
+D3D12 Present, ResizeBuffers and texture/buffer CreateResource failures
+(DEVICE_REMOVED, HUNG, RESET, DRIVER_INTERNAL_ERROR, with
+GetDeviceRemovedReason) and Vulkan present, submit, vmaCreateImage and
+vmaCreateBuffer (VK_ERROR_DEVICE_LOST). main.cpp's handler shows what
+happened and what to try, and closes (exit_error). RecompFrontend 0018: the
+Graphics API option shown on Windows (Auto, D3D12, Vulkan; read when the
+renderer starts, so for the next start). Tested by calling the handler: the
+message, then a clean exit.
+
+**Portable by default** (src/main/portable.cpp, as ortarecomp's): portable.txt
+is made in the game's folder (the working folder, which must hold assets/;
+in an AppImage, the AppImage's folder, used through APP_FOLDER_PATH) unless
+the user folder already has files, settings are beside the game without
+portable.txt (it was deleted), or the folder can't be written. The log says
+which ("[TRW] data folder"). Tested: new (made), user folder set up (kept),
+portable.txt deleted (user folder), already portable, AppImage (beside it).
+
+**The command line** (src/main/command_line.cpp, ortarecomp's interface):
+--boot, --rom FILE (recomp::select_rom, as Load ROM), --netplay, --host,
+--join CODE (online_menu::open_and_host/open_and_join, pressing Host or
+Join; the join prompt with the host's settings still asks), --help, and any
+setting as --NAME VALUE / --NAME=VALUE / --NAME (on), for that run only. The
+settings are every option of the tabs that isn't hidden, by their ids with
+dashes or underscores (plainer names for recompui's graphics ids:
+--resolution, --msaa, --downsampling...), choices by the menu's names or the
+file's keys; --help lists them from the schema. Applied after the configs
+load and the first-launch preset; graphics through graphics::apply_config
+(RecompFrontend 0019 exposes it). Not saved: each overridden option gets a
+JSON serializer writing the file's value while the option still has the run's
+value (a change in the menu saves as usual). Text goes to the log and the
+terminal, on Windows a message box when there's no terminal (AttachConsole).
+Tested: --help; unknown setting, bad value, not a ROM, missing value; a new
+folder with --rom (the .n64), --boot and settings: portable, ROM kept,
+straight into the game, files untouched; saving Sound and Graphics in the
+menu kept the files' values for the overridden options, the menu's own change
+saved; --host and --join between two copies.
+
+## 2026-11-15, round 193: Linux packages without the audio microcode (issue 15)
+
+wootbeer/PaxDino#15: the Linux AppImage opens the launcher and loads the ROM,
+then exits as the game starts: "No RSP microcode registered for task type 2"
+(the audio task). rsp/aspMain.cpp is generated from the ROM by RSPRecomp in
+the build, and CMake leaves it out without a word when turokrw.us.z64 isn't
+in the source folder. The 0.1.7 and 0.1.8 Linux packages were built in a
+clean worktree with RecompiledFuncs/ copied in but not the ROM, and their
+check only opened the launcher. Windows packages are built in the user's tree
+(ROM there) and were fine.
+
+Rebuilt 0.1.8 for Linux from its own commit (96e6a43, so its build ID still
+matches the Windows 0.1.8 for netplay) with the ROM in place; checked it has
+aspMain, and the extracted AppImage started the game to the title screen.
+To keep it from happening again: both package scripts stop without the ROM,
+package-linux.sh also stops if the binary has no aspMain, and CMake warns
+when the ROM is missing. A package's check now starts the game, not just
+the launcher.
+
+## 2026-11-13, round 192: the Start must have the settings the joiner accepted
+
+Found while porting netplay to the BattleTanx GA recomp (its round 200).
+The joiner took the Start's settings as they came (receive_as_joiner, case
+Start), not checking them against the Welcome's, which are the ones shown in
+the join prompt and accepted. A dishonest host could show one set (no
+cheats or unlocks) and start with another; sane_settings limited the
+values, but the switch itself shouldn't be possible.
+
+Now the Start's settings (through sane_settings) must match the Welcome's,
+field by field (same_settings, next to sane_settings): options,
+weapon_rule, field_of_view, widescreen, load_profiles. look_spring is meant
+to differ (the Start has every port's Look Spring Override, the Welcome had
+none), so only this player's own bit is checked: it must be what its Hello
+sent (get_look_spring_override(0)). A mismatch fails the join: "The host's
+settings changed after you joined. Join again to see the new ones."
+
+Tested:
+- A normal join over 127.0.0.1 with the host's Look Spring Override on and
+  the joiner's off: joined, into a Gauntlet match, in sync (sync test, 1683
+  frames).
+- A fake host (Python UDP on the host port, its packets the joiner's own
+  Hello with fields set at the Packet's offsets, so magic, version and
+  layout are right): a Start with an extra option bit (All Weapons) the
+  Welcome didn't have is refused with the message; one flipping the
+  joiner's own look spring bit too; one matching the Welcome is accepted.
+
+## 2026-11-10, round 191: no game thread spins while waiting
+
+Checked after the BattleTanx recomp's main thread was found using ~93% of a
+core at all times (its polling loops call a yield hook back to back; fixed
+there by sleeping once a wait has gone on for 2 ms). This project has no
+such hook and no known polling loop, and measured the same way it has
+nothing to fix:
+
+- Per-thread CPU from /proc over 10 s (sandbox, Release build): every "Game
+  N" thread under 1% on the title screen, the main menu, the Rumble Pak
+  prompt, in a Gauntlet match and with the match paused. All game threads
+  together, paused match, 20 s: 0.35% of a core.
+- gdb, all threads: every game thread asleep on a semaphore (blocked waits,
+  not polling); Game 0 in ultramodern::wait_for_external_message, the
+  runtime's idle wait (lib-patches/N64ModernRuntime/0003 makes the scheduler
+  wait for the next event rather than spin when nothing can run).
+
+The busy threads in the sandbox are llvmpipe and RT64's Gfx threads: the
+software renderer here, the GPU's work on real hardware.
+
 ## 2026-11-07, round 190: stick look without the stutter
 
 The user: up and down with the override on was a little stuttery (the

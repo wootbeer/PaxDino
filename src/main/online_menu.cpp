@@ -649,6 +649,22 @@ void trw::online_menu::open(const std::u8string& id) {
     in_menu_context([] { host_button->focus(); });
 }
 
+void trw::online_menu::open_and_host(const std::u8string& id) {
+    open(id);
+    if (modal != nullptr && recomp::is_rom_valid(id)) {
+        on_host();
+    }
+}
+
+void trw::online_menu::open_and_join(const std::u8string& id, const std::string& code) {
+    open(id);
+    if (modal != nullptr && recomp::is_rom_valid(id)) {
+        address_text = code;
+        in_menu_context([] { address_input->set_text(address_text); });
+        on_join();
+    }
+}
+
 namespace {
     // While idle: the public games, asked for again every 15 seconds.
     void update_public_list() {

@@ -1255,6 +1255,14 @@ namespace {
         return settings;
     }
 
+    // Two (sane) settings the same, field by field, except look_spring: each
+    // port's own Look Spring Override, which the Start has for everyone and
+    // the Welcome didn't.
+    bool same_settings(const trw::config::SharedSettings& a, const trw::config::SharedSettings& b) {
+        return a.options == b.options && a.weapon_rule == b.weapon_rule && a.field_of_view == b.field_of_view &&
+            a.widescreen == b.widescreen && a.load_profiles == b.load_profiles;
+    }
+
     // Reads only for sweeps this game hasn't played yet and not far ahead of
     // it (no game gets more than the input delay ahead), so nothing a peer
     // sends can grow the maps or wrap the numbers. Each read as the game may
@@ -1459,9 +1467,20 @@ namespace {
         case Start:
             if (accepted && !enabled && !start_pending && packet.assigned != 0 && packet.players >= 2 &&
                 packet.players <= (uint32_t)kMaxPlayers && packet.assigned < packet.players) {
+                // The settings the player saw and accepted (the Welcome's), and
+                // this player's own Look Spring Override as its Hello sent it;
+                // the other ports' look spring is theirs to take.
+                trw::config::SharedSettings start_settings = sane_settings(packet.settings);
+                bool own_look_spring = (start_settings.look_spring >> packet.assigned) & 1;
+                if (!same_settings(start_settings, welcome_settings) ||
+                    own_look_spring != trw::config::get_look_spring_override(0)) {
+                    lobby = trw::netplay::Lobby::Failed;
+                    lobby_error = "The host's settings changed after you joined. Join again to see the new ones.";
+                    return;
+                }
                 local = (int)packet.assigned;
                 player_count = (int)packet.players;
-                welcome_settings = sane_settings(packet.settings);
+                welcome_settings = start_settings;
                 delay = std::clamp(packet.first, 1u, 30u);
                 StartPaks paks;
                 std::memcpy(&paks, packet.reads, sizeof(paks));

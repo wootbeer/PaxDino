@@ -1,0 +1,27 @@
+diff --git a/recompui/src/config/ui_config_tab_graphics.cpp b/recompui/src/config/ui_config_tab_graphics.cpp
+index 4fdf81f..586d6e4 100644
+--- a/recompui/src/config/ui_config_tab_graphics.cpp
++++ b/recompui/src/config/ui_config_tab_graphics.cpp
+@@ -341,13 +341,21 @@ namespace recompui {
+                 ultramodern::renderer::HUDRatioMode::Clamp16x9
+             );
+ 
++            // Shown where there's a choice (Windows: D3D12 or Vulkan), as one
++            // driver can work where the other has trouble.
+             config.add_enum_option(
+                 graphics::options::api_option,
+                 "Graphics API",
+-                "Selects the graphics API to use.",
++                "Which graphics driver interface to draw with. <recomp-color primary>Auto</recomp-color> uses D3D12 on Windows. "
++                "If the game crashes or the graphics driver stops responding, try the other one."
++                "<br /><br /><b>Takes effect the next time the game starts.</b>",
+                 graphics_api_options,
+                 ultramodern::renderer::GraphicsApi::Auto,
++        #if defined(_WIN32)
++                false
++        #else
+                 true
++        #endif
+             );
+ 
+             config.add_enum_option(

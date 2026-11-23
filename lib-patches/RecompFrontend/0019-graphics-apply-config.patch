@@ -1,0 +1,25 @@
+--- a/recompui/include/recompui/config.h
++++ b/recompui/include/recompui/config.h
+@@ -67,6 +67,9 @@
+             }
+     
+             void update_msaa_supported(bool supported);
++            // Hands the graphics config's current values to the renderer (as
++            // loading or applying it does), after setting them from code.
++            void apply_config();
+             void update_refresh_rate(uint32_t refresh_rate);
+             void toggle_fullscreen();
+         }
+--- a/recompui/src/config/ui_config_tab_graphics.cpp
++++ b/recompui/src/config/ui_config_tab_graphics.cpp
+@@ -180,6 +180,10 @@
+             ultramodern::renderer::set_graphics_config(new_config);
+         }
+ 
++        void graphics::apply_config() {
++            apply_graphics_config();
++        }
++
+         void graphics::update_msaa_supported(bool supported) {
+             recomp::config::Config &config = get_graphics_config();
+             if (!supported) {

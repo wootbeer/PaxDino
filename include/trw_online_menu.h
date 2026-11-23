@@ -7,6 +7,10 @@
 namespace trw::online_menu {
     // `game_id`: the game to start once the players are connected.
     void open(const std::u8string& game_id);
+    // The command line's --host and --join: open, then Host, or Join with
+    // `code` (a join code or an address) as if typed.
+    void open_and_host(const std::u8string& game_id);
+    void open_and_join(const std::u8string& game_id, const std::string& code);
     // Each launcher frame.
     void update();
 

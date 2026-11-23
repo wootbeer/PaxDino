@@ -7,7 +7,7 @@
 # defaults to x86, which can't link x64):
 #
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-#   .\tools\package-windows.ps1 -Version 0.1.8-beta
+#   .\tools\package-windows.ps1 -Version 0.1.9-beta
 #
 # Output: dist\PaxDino-<version>-windows.zip containing the exe,
 # its DLLs, the assets folder (loaded relative to the working directory, which
@@ -43,6 +43,11 @@ foreach ($required in @("RecompiledFuncs")) {
     if (-not (Test-Path $required)) {
         throw "$required\ is missing -- run tools\setup-windows.ps1 or the N64Recomp step in BUILDING.md first."
     }
+}
+# The audio microcode (rsp\) is generated from the ROM; without it the build
+# leaves it out and the game exits as soon as it starts.
+if (-not (Test-Path "turokrw.us.z64")) {
+    throw "turokrw.us.z64 is missing -- the audio microcode is made from it (BUILDING.md step 3)."
 }
 if (-not (Test-Path $ClangCl)) {
     throw "clang-cl not found at $ClangCl -- pass -ClangCl <path> or set `$env:TRW_CLANGCL."

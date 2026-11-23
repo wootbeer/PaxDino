@@ -42,8 +42,21 @@ SHA-1:
 Start the game, pick **Load ROM** and select your file. It only has to be
 done once.
 
-Add a blank portable.txt in the application's folder to make it portable,
-if you want to save settings and saves locally.
+New installs are portable: settings, saves and the ROM are kept in the
+game's own folder (a `portable.txt` there marks it; for the Linux AppImage,
+the folder the AppImage is in). If you already used an earlier version, your
+settings stay where they were. Delete `portable.txt` to use your user folder
+instead, or add one to switch to the game's folder.
+
+## Command Line
+- `--boot` starts the game without the launcher.
+- `--rom FILE` uses FILE as the game's ROM (kept, like Load ROM).
+- `--netplay` opens the Netplay screen; `--host` hosts; `--join CODE` joins
+  with a join code or address.
+- Any setting can be given for that run only (not saved), as
+  `--NAME VALUE` or `--NAME=VALUE`, e.g.
+  `PaxDino --boot --resolution auto --msaa 4x --unlimited-ammo 1`.
+- `--help` lists them all.
 
 ## Netplay
 Everyone needs the same PaxDino version and their own game file.

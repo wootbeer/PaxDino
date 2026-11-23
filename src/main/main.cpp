@@ -44,6 +44,7 @@ extern char** environ;
 #endif
 
 #include "recompui/recompui.h"
+#include "plume/plume_render_interface.h"
 #include "recompui/program_config.h"
 #include "recompui/renderer.h"
 #include "recompui/config.h"
@@ -63,6 +64,9 @@ extern char** environ;
 #include "trw_netplay.h"
 #include "trw_update.h"
 #include "trw_online_menu.h"
+#include "trw_portable.h"
+#include "trw_command_line.h"
+#include "trw_restart.h"
 #include "trw_steam.h"
 #include "trw_crosshair.h"
 #include "trw_launcher_art.h"
@@ -95,7 +99,7 @@ namespace trw {
 
 static const std::string program_name = "PaxDino: Rage Wars Recomp";
 static const std::u8string program_id = u8"trwrecomp";
-static const std::string version_string = "0.1.8";
+static const std::string version_string = "0.1.9";
 
 template <typename... Ts>
 [[noreturn]] static void exit_error(const char* fmt, Ts... args) {
@@ -104,6 +108,32 @@ template <typename... Ts>
     fprintf(stderr, "%s\n", buf);
     ultramodern::error_handling::message_box(buf);
     ultramodern::error_handling::quick_exit(__FILE__, __LINE__, __FUNCTION__);
+}
+
+// The graphics device lost (lib-patches/plume/0001): the driver reset or the
+// GPU went away. Nothing can be drawn any more, and carrying on only crashes
+// at the next thing the renderer makes, so say what happened and close.
+static const char* device_lost_reason(uint32_t code) {
+    switch (code) {
+        case 0x887A0005: return "device removed";
+        case 0x887A0006: return "the GPU stopped responding (hung)";
+        case 0x887A0007: return "the driver reset the GPU";
+        case 0x887A0020: return "a driver internal error";
+        case 0x887A0001: return "an invalid call";
+        case 0xFFFFFFFC: return "device lost";
+        default: return "unknown";
+    }
+}
+
+static void on_graphics_device_lost(const char* api, uint32_t code, uint32_t reason) {
+    char buf[1024];
+    std::snprintf(buf, sizeof(buf),
+        "The graphics driver stopped responding, so PaxDino has to close.\n\n"
+        "Try updating your graphics driver. On a laptop with two GPUs, set PaxDino to run on the faster one "
+        "(Windows: Settings > System > Display > Graphics). You can also try the other Graphics API in Settings > Graphics.\n\n"
+        "(%s error 0x%08X: %s; reason 0x%08X: %s)",
+        api, code, device_lost_reason(code), reason, device_lost_reason(reason));
+    exit_error("%s", buf);
 }
 
 // --- RSP microcode dispatch -------------------------------------------
@@ -837,7 +867,28 @@ namespace {
         static int frames_to_netplay = 30;
         if (open_netplay_at_start && --frames_to_netplay <= 0) {
             open_netplay_at_start = false;
-            trw::online_menu::open(supported_games[0].game_id);
+            const trw::cli::Options& cli = trw::cli::options();
+            if (!cli.join.empty()) {
+                trw::online_menu::open_and_join(supported_games[0].game_id, cli.join);
+            }
+            else if (cli.host) {
+                trw::online_menu::open_and_host(supported_games[0].game_id);
+            }
+            else {
+                trw::online_menu::open(supported_games[0].game_id);
+            }
+        }
+        // --boot: the game at once (the launcher only shows for a frame).
+        static bool booted = false;
+        if (!booted && trw::cli::options().boot) {
+            booted = true;
+            if (recomp::is_rom_valid(supported_games[0].game_id)) {
+                recomp::start_game(supported_games[0].game_id, {});
+                recompui::hide_all_contexts();
+            }
+            else {
+                recompui::open_info_prompt("Start Game", "There's no ROM yet: pick Load ROM, or start with --rom FILE.", "OK", nullptr);
+            }
         }
         // PAXDINO_AUTOSTART (for testing): Start Game by itself, a second
         // after the launcher is up.
@@ -875,14 +926,21 @@ int main(int argc, char** argv) {
         if (freopen("trw_log.txt", "w", stderr) != nullptr) {
             setvbuf(stderr, nullptr, _IONBF, 0);
         }
-        freopen("trw_log.txt", "a", stdout);
+        if (freopen("trw_log.txt", "a", stdout) != nullptr) {
+            // Unbuffered too: lines the libraries print (a controller added,
+            // say) aren't lost if the game dies right after.
+            setvbuf(stdout, nullptr, _IONBF, 0);
+        }
     }
 #endif
     std::set_terminate(report_unhandled_exception_and_abort);
-    for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "--netplay") {
-            open_netplay_at_start = true;
+    {
+        std::string error;
+        if (!trw::cli::parse(argc, argv, error)) {
+            trw::cli::tell(program_name, error + "\n(--help lists them)");
+            return 2;
         }
+        open_netplay_at_start = trw::cli::options().netplay || trw::cli::options().host || !trw::cli::options().join.empty();
     }
 
     recomp::Version project_version{};
@@ -905,6 +963,7 @@ int main(int argc, char** argv) {
 
     recompui::programconfig::set_program_name(program_name);
     recompui::programconfig::set_program_id(program_id);
+    trw::portable::choose(); // before the config folder is used
 
     SDL_InitSubSystem(SDL_INIT_AUDIO);
     if (!open_audio_device(game_frequency)) {
@@ -919,10 +978,29 @@ int main(int argc, char** argv) {
     recompui::register_primary_font("Exo2.ttf", "Exo 2");
 
     recomp::register_config_path(recompui::file::get_app_folder_path());
+    fprintf(stderr, "[TRW] data folder: %s (%s)\n", recompui::file::get_app_folder_path().string().c_str(), trw::portable::note().c_str());
     trw::music::create_folder(); // Custom Music's folder, beside the executable
 
     for (const auto& game : supported_games) {
         recomp::register_game(game);
+    }
+
+    // --rom FILE: as Load ROM (checked, then kept in the data folder).
+    if (!trw::cli::options().rom.empty()) {
+        const char* problem = nullptr;
+        switch (recomp::select_rom(std::filesystem::u8path(trw::cli::options().rom), supported_games[0].game_id)) {
+            case recomp::RomValidationError::Good: break;
+            case recomp::RomValidationError::FailedToOpen: problem = "it can't be opened"; break;
+            case recomp::RomValidationError::NotARom: problem = "it isn't an N64 ROM"; break;
+            case recomp::RomValidationError::IncorrectRom: problem = "it's a different game"; break;
+            case recomp::RomValidationError::IncorrectVersion: problem = "it's another version (PaxDino needs Turok: Rage Wars USA)"; break;
+            default: problem = "it isn't the right ROM"; break;
+        }
+        if (problem != nullptr) {
+            trw::cli::tell(program_name, "Can't use " + trw::cli::options().rom + ": " + problem + ".");
+            return 1;
+        }
+        fprintf(stderr, "[TRW] ROM loaded from %s\n", trw::cli::options().rom.c_str());
     }
 
     recompinput::players::set_single_player_mode(true);
@@ -950,7 +1028,20 @@ int main(int argc, char** argv) {
     recompui::config::create_mods_tab();
     trw::presets::note_first_launch();
     recompui::config::finalize();
+    plume::deviceLostCallback = on_graphics_device_lost;
     trw::presets::apply_first_launch();
+    // The command line's: --help, then its settings for this run.
+    if (trw::cli::options().help) {
+        trw::cli::tell(program_name, trw::cli::help_text(program_name + " " + version_string));
+        return 0;
+    }
+    {
+        std::string error;
+        if (!trw::cli::apply_settings(error)) {
+            trw::cli::tell(program_name, error + "\n(--help lists them)");
+            return 2;
+        }
+    }
     trw::controls::update_controller_profiles(recomp::get_config_path());
     trw::chat::update_profiles(recomp::get_config_path());
 
@@ -1004,6 +1095,7 @@ int main(int argc, char** argv) {
         .get_game_thread_name = get_game_thread_name,
     };
 
+    trw::restart::install(argc, argv);
     recompui::register_launcher_init_callback(launcher_init);
     recompui::register_launcher_update_callback(launcher_update);
 
@@ -1033,11 +1125,15 @@ int main(int argc, char** argv) {
         .message_queue_control = {}, // the runtime's defaults
     });
 
+    // A crash leaves its report instead of this, so a log ending without
+    // either means the game was killed or ended in a way nothing could see.
+    fprintf(stderr, "[TRW] closed normally\n");
     NFD_Quit();
     trw::netplay::shutdown();
     if (trw::online_menu::leaving_to_netplay_screen()) {
         start_again_on_netplay_screen();
     }
+    trw::restart::relaunch_if_requested();
 
     // The game's threads are never joined by the runtime and may still be
     // blocked on (or spinning over) runtime state when recomp::start

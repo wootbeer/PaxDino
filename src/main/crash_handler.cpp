@@ -26,6 +26,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <csignal>
 #elif defined(__linux__)
 #include <csignal>
 #include <dlfcn.h>
@@ -38,6 +39,10 @@
 
 #include "recomp.h"
 #include "librecomp/sections.h"
+#include "trw_restart.h"
+
+// Set by the runtime's ultramodern::quit() (librecomp/src/recomp.cpp) as soon as quitting starts.
+extern std::atomic_bool exited;
 
 namespace {
     struct GameFunc {
@@ -178,8 +183,21 @@ namespace {
     // can still be running; their next access faults. While the game runs,
     // the whole 512 MB KSEG0 window is mapped, so a fault inside it can only
     // be that -- exit quietly instead of reporting a crash.
+    //
+    // Also anything once quitting has started (the runtime's `exited`): the
+    // game's saves are already written, and a library failing to shut down
+    // isn't worth a crash report. If Restart was chosen, the game still
+    // starts again (src/main/restart.cpp).
     bool is_shutdown_fault(bool has_access, uintptr_t access) {
-        return has_access && in_rdram(access) && (access - (uintptr_t)rdram_base) < 0x20000000ull;
+        if (exited.load()) {
+            trw::restart::relaunch_if_requested();
+            return true;
+        }
+        if (has_access && in_rdram(access) && (access - (uintptr_t)rdram_base) < 0x20000000ull) {
+            trw::restart::relaunch_if_requested();
+            return true;
+        }
+        return false;
     }
 
     // A 32-bit guest word (N64 memory is held word-swapped, so a plain load).
@@ -299,6 +317,25 @@ namespace {
     }
 
 #if defined(_WIN32)
+    // Ends that skip the exception filter on their own (abort, the C
+    // runtime's invalid-parameter check, a pure virtual call), raised as
+    // these codes instead so the filter writes the usual report and stack.
+    constexpr DWORD abort_exception = 0xE0545201;
+    constexpr DWORD invalid_parameter_exception = 0xE0545202;
+    constexpr DWORD purecall_exception = 0xE0545203;
+
+    void on_abort_signal(int) {
+        RaiseException(abort_exception, EXCEPTION_NONCONTINUABLE, 0, nullptr);
+    }
+
+    void on_invalid_parameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) {
+        RaiseException(invalid_parameter_exception, EXCEPTION_NONCONTINUABLE, 0, nullptr);
+    }
+
+    void on_purecall() {
+        RaiseException(purecall_exception, EXCEPTION_NONCONTINUABLE, 0, nullptr);
+    }
+
     const char* exception_name(DWORD code) {
         switch (code) {
         case EXCEPTION_ACCESS_VIOLATION: return "access violation";
@@ -306,6 +343,9 @@ namespace {
         case EXCEPTION_INT_DIVIDE_BY_ZERO: return "integer divide by zero";
         case EXCEPTION_STACK_OVERFLOW: return "stack overflow";
         case EXCEPTION_IN_PAGE_ERROR: return "in-page error";
+        case abort_exception: return "abort() called";
+        case invalid_parameter_exception: return "invalid parameter to a C runtime function";
+        case purecall_exception: return "pure virtual function called";
         default: return "unhandled exception";
         }
     }
@@ -458,7 +498,7 @@ namespace {
                 host_frames[host_frame_count++] = (uintptr_t)frames[i];
             }
         }
-        const char* what = sig == SIGSEGV ? "segmentation fault" : sig == SIGBUS ? "bus error" : sig == SIGILL ? "illegal instruction" : "floating point exception";
+        const char* what = sig == SIGSEGV ? "segmentation fault" : sig == SIGBUS ? "bus error" : sig == SIGILL ? "illegal instruction" : sig == SIGABRT ? "abort() called" : "floating point exception";
         if (is_shutdown_fault(sig == SIGSEGV || sig == SIGBUS, (uintptr_t)info->si_addr)) {
             _exit(0);
         }
@@ -495,12 +535,19 @@ void trw_install_crash_handler(const SectionTableEntry* sections, size_t num_sec
 
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(unhandled_filter);
+    std::signal(SIGABRT, on_abort_signal);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT); // no Windows Error Reporting first
+    _set_invalid_parameter_handler(on_invalid_parameter);
+    _set_purecall_handler(on_purecall);
+    // Room for the filter to run on this thread after a stack overflow.
+    ULONG guarantee = 64 * 1024;
+    SetThreadStackGuarantee(&guarantee);
 #elif defined(__linux__)
     struct sigaction sa {};
     sa.sa_sigaction = signal_handler;
     sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigemptyset(&sa.sa_mask);
-    for (int sig : { SIGSEGV, SIGBUS, SIGILL, SIGFPE }) {
+    for (int sig : { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT }) {
         sigaction(sig, &sa, nullptr);
     }
 #endif

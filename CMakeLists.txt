@@ -78,6 +78,7 @@ add_compile_definitions(
 # Local fixes to the submodules (lib-patches/), applied at configure time.
 include(${CMAKE_SOURCE_DIR}/cmake/ApplyLibPatches.cmake)
 trw_apply_lib_patches(rt64 rt64)
+trw_apply_lib_patches(plume rt64/src/contrib/plume) # a submodule of rt64's
 trw_apply_lib_patches(N64Recomp N64ModernRuntime/N64Recomp)
 trw_apply_lib_patches(N64ModernRuntime N64ModernRuntime)
 trw_apply_lib_patches(RecompFrontend RecompFrontend)
@@ -382,6 +383,8 @@ if (EXISTS "${TRW_ROM_PATH}")
     )
     target_sources(PaxDino PRIVATE ${CMAKE_SOURCE_DIR}/rsp/aspMain.cpp)
     target_compile_definitions(PaxDino PRIVATE TRW_HAS_RSP_AUDIO)
+else()
+    message(WARNING "turokrw.us.z64 not found: building without the audio microcode, so the game will exit as soon as it starts. See BUILDING.md step 3.")
 endif()
 
 target_sources(PaxDino PRIVATE ${SOURCES})
