@@ -32,7 +32,7 @@ cd "$root"
 cmake -S . -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build "$build_dir" --target PaxDino
-nm -C "$build_dir/PaxDino" | grep -q aspMain || { echo "The build has no audio microcode (aspMain) -- not packaging it." >&2; exit 1; }
+nm -C "$build_dir/PaxDino" | grep aspMain >/dev/null || { echo "The build has no audio microcode (aspMain) -- not packaging it." >&2; exit 1; }
 
 linuxdeploy="$build_dir/linuxdeploy-x86_64.AppImage"
 if [ ! -x "$linuxdeploy" ]; then
